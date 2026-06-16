@@ -1,0 +1,10 @@
+{
+  "custom/ptt": {
+    "format": "{}",
+    "exec": "ptt-indicator",
+    "return-type": "json",
+    "on-click": "ptt-toggle",
+    "interval": 1,
+    "tooltip": true
+  }
+}
