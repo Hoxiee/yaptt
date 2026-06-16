@@ -2,32 +2,40 @@
 
 System-wide push-to-talk for Wayland (PipeWire/PulseAudio).
 
-Grabs the keyboard at the evdev level, intercepts a configurable key (default: Tilde/Grave),
-and toggles microphone mute via `wpctl`. All other keys are forwarded transparently via
-uinput virtual keyboards.
+Uses keyd for dynamic key remapping and evdev for event detection.
+No EVIOCGRAB — niri keybinds and all keys work normally when PTT is active.
 
 ## Features
 
 - System-wide PTT — works in any application
-- Grab-based key blocking — PTT key produces no output in applications
+- keyd-based remapping — no keyboard grab, niri keybinds work
 - PipeWire/PulseAudio support via `wpctl`
 - Waybar integration with toggle indicator
 - SIGUSR1-based toggle (on/off)
 - Systemd user service
+- Desktop notifications via `notify-send`
 
 ## Installation
 
-```bash
-pip install .
-```
-
-Or from source:
+### From source (Rust)
 
 ```bash
-git clone https://github.com/user/ptt
-cd ptt
-pip install .
+cargo build --release
 ```
+
+Binaries:
+- `target/release/ptt-daemon` — main daemon
+- `target/release/ptt-toggle` — toggle script
+- `target/release/ptt-indicator` — waybar indicator
+
+### Requirements
+
+- keyd system service running
+- User in `keyd` group
+- Sudoers rule for keyd config updates:
+  ```
+  hoshi ALL=(root) NOPASSWD: /usr/bin/keyd reload, /usr/bin/tee /etc/keyd/default.conf
+  ```
 
 ### Systemd service
 
@@ -52,36 +60,25 @@ ptt-toggle
 kill -USR1 $(cat /tmp/ptt-daemon.pid)
 ```
 
-Toggle is also available via waybar click on the PTT module.
-
 ### State
 
-- **ON**: Mic is muted by default. Hold Tilde to unmute. Waybar shows green indicator.
-- **OFF**: Tilde works normally. Mic is unmuted.
-
-### Limitations
-
-When PTT is active, the keyboard is grabbed at the evdev level (`EVIOCGRAB`).
-This means **all** key events are blocked from reaching the compositor — including
-window manager keybinds like Mod+M. Toggle is only available via waybar click.
+- **ON**: keyd remaps grave → f13, mic is muted. Hold Tilde to unmute. Waybar shows green indicator.
+- **OFF**: grave works normally. Mic is unmuted.
 
 ## How it works
 
-1. Scans `/dev/input/by-id/*-event-kbd` for keyboard devices
-2. Grabs each keyboard exclusively via `EVIOCGRAB`
-3. Creates uinput virtual keyboards for each physical device
-4. Forwards all events except the PTT key to virtual keyboards
-5. On PTT key press: `wpctl set-mute @DEFAULT_AUDIO_SOURCE@ 0`
-6. On PTT key release: `wpctl set-mute @DEFAULT_AUDIO_SOURCE@ 1`
-7. SIGUSR1 toggles between active/paused states
+1. keyd remaps `grave → f13` when PTT is active
+2. Daemon reads events from keyd virtual keyboard
+3. On f13 press: `wpctl set-mute @DEFAULT_AUDIO_SOURCE@ 0`
+4. On f13 release: `wpctl set-mute @DEFAULT_AUDIO_SOURCE@ 1`
+5. SIGUSR1 toggles between active/paused states
+6. When paused, keyd restores `grave → grave`
 
-## Requirements
+## Binary sizes
 
-- Linux with evdev support
-- PipeWire or PulseAudio
-- Python 3.10+
-- `evdev` Python package
-- User must be in `input` group
+- `ptt-daemon`: ~2.2MB
+- `ptt-toggle`: ~500KB
+- `ptt-indicator`: ~500KB
 
 ## License
 
