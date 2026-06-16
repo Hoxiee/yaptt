@@ -8,6 +8,10 @@ description = "System-wide push-to-talk for Wayland"
 name = "ptt-daemon"
 path = "src/main.rs"
 
+[[bin]]
+name = "ptt-toggle"
+path = "src/bin/ptt-toggle.rs"
+
 [dependencies]
 evdev = "0.12"
 tokio = { version = "1", features = ["full"] }
@@ -18,3 +22,4 @@ anyhow = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 dirs = "5"
+libc = "0.2"
