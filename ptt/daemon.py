@@ -1,46 +1,35 @@
-"""PTT daemon — grabs keyboards, intercepts PTT key, toggles mic via wpctl."""
+"""PTT daemon — reads keyd virtual keyboard events, detects PTT key, toggles mic.
+
+Uses keyd for dynamic key remapping:
+  PTT ON:  grave → f13  (daemon detects f13, toggles mic)
+  PTT OFF: grave → grave (normal behavior)
+
+No EVIOCGRAB — niri keybinds and all keys work normally.
+"""
 
 import evdev
-from evdev import UInput, ecodes
-import glob
+from evdev import ecodes
 import os
 import select
 import signal
 import subprocess
 import sys
 
-PTT_KEY = ecodes.KEY_GRAVE
-DEVICE_ID_PATH = "/dev/input/by-id"
 STATE_FILE = "/tmp/ptt-state"
 PID_FILE = "/tmp/ptt-daemon.pid"
-
-MODIFIER_KEYS = {
-    ecodes.KEY_LEFTMETA, ecodes.KEY_RIGHTMETA,
-    ecodes.KEY_LEFTCTRL, ecodes.KEY_RIGHTCTRL,
-    ecodes.KEY_LEFTALT, ecodes.KEY_RIGHTALT,
-    ecodes.KEY_LEFTSHIFT, ecodes.KEY_RIGHTSHIFT,
-}
+KEYD_CONFIG = "/etc/keyd/default.conf"
 
 
-def find_keyboards():
-    devices = []
-    for path in sorted(glob.glob(f"{DEVICE_ID_PATH}/*-event-kbd")):
-        try:
-            dev = evdev.InputDevice(path)
-            caps = dev.capabilities(verbose=False)
-            if ecodes.EV_KEY in caps and ecodes.KEY_Q in caps[ecodes.EV_KEY]:
-                devices.append(dev)
-            else:
-                dev.close()
-        except Exception:
-            pass
-    return devices
-
-
-def make_virtual(device):
-    caps = device.capabilities(verbose=False)
-    key_caps = caps.get(ecodes.EV_KEY, [])
-    return UInput({ecodes.EV_KEY: key_caps}, name=f"PTT-{device.name}")
+def remap_grave(target):
+    try:
+        config = f"[ids]\n\n*\n\n[main]\n\ngrave = {target}\n"
+        subprocess.run(
+            ["sudo", "-n", "tee", KEYD_CONFIG],
+            input=config.encode(), capture_output=True, timeout=5)
+        subprocess.run(["sudo", "-n", "keyd", "reload"],
+                       capture_output=True, timeout=5)
+    except Exception as e:
+        print(f"keyd remap failed: {e}", file=sys.stderr)
 
 
 def write_state(active):
@@ -48,14 +37,27 @@ def write_state(active):
         f.write("1" if active else "0")
 
 
+def find_keyd_keyboard():
+    for path in evdev.list_devices():
+        try:
+            dev = evdev.InputDevice(path)
+            if "keyd virtual keyboard" in dev.name:
+                return dev
+            dev.close()
+        except Exception:
+            pass
+    return None
+
+
 class PTT:
     def __init__(self):
-        self.devices = find_keyboards()
-        if not self.devices:
-            print("No keyboards found", file=sys.stderr)
+        self.device = find_keyd_keyboard()
+        if not self.device:
+            print("keyd virtual keyboard not found", file=sys.stderr)
             sys.exit(1)
 
-        self.pairs = []
+        print(f"Using: {self.device.name} ({self.device.path})", file=sys.stderr)
+
         self.active = True
         self.toggle_r, self.toggle_w = os.pipe()
 
@@ -65,34 +67,24 @@ class PTT:
         self.grab()
 
     def grab(self):
-        for dev in self.devices:
-            dev.grab()
-            virt = make_virtual(dev)
-            self.pairs.append((dev, virt))
-            print(f"Grabbed: {dev.name} ({dev.path})", file=sys.stderr)
+        remap_grave("f13")
         subprocess.Popen(["wpctl", "set-mute", "@DEFAULT_AUDIO_SOURCE@", "1"])
         write_state(True)
+        print("PTT active", file=sys.stderr)
 
     def ungrab(self):
-        for dev, virt in self.pairs:
-            try:
-                dev.ungrab()
-            except Exception:
-                pass
-            virt.close()
-        self.pairs.clear()
+        remap_grave("grave")
         subprocess.Popen(["wpctl", "set-mute", "@DEFAULT_AUDIO_SOURCE@", "0"])
         write_state(False)
+        print("PTT paused", file=sys.stderr)
 
     def toggle(self):
         if self.active:
             self.ungrab()
             self.active = False
-            print("PTT paused", file=sys.stderr)
         else:
             self.grab()
             self.active = True
-            print("PTT active", file=sys.stderr)
 
     def cleanup(self):
         if self.active:
@@ -111,9 +103,8 @@ class PTT:
         signal.signal(signal.SIGINT, lambda s, f: self.cleanup())
 
         while True:
-            fds = {dev.fd: (dev, virt) for dev, virt in self.pairs}
+            fds = {self.device.fd: self.device, self.toggle_r: "toggle"}
             poll = select.poll()
-            poll.register(self.toggle_r, select.POLLIN)
             for fd in fds:
                 poll.register(fd, select.POLLIN)
 
@@ -123,17 +114,16 @@ class PTT:
                         os.read(self.toggle_r, 1)
                         goto_outer = True
                         break
-                    dev, virt = fds[fd]
-                    for event in dev.read():
-                        if event.type == ecodes.EV_KEY and event.code == PTT_KEY:
+                    for event in self.device.read():
+                        if event.type != ecodes.EV_KEY:
+                            continue
+                        if event.code == ecodes.KEY_F13:
                             if event.value == 1:
-                                subprocess.Popen(["wpctl", "set-mute", "@DEFAULT_AUDIO_SOURCE@", "0"])
+                                subprocess.Popen(["wpctl", "set-mute",
+                                                  "@DEFAULT_AUDIO_SOURCE@", "0"])
                             elif event.value == 0:
-                                subprocess.Popen(["wpctl", "set-mute", "@DEFAULT_AUDIO_SOURCE@", "1"])
-                            continue
-                        if event.type == ecodes.EV_KEY and event.code in MODIFIER_KEYS:
-                            continue
-                        virt.write(event.type, event.code, event.value)
+                                subprocess.Popen(["wpctl", "set-mute",
+                                                  "@DEFAULT_AUDIO_SOURCE@", "1"])
                 else:
                     continue
                 break
