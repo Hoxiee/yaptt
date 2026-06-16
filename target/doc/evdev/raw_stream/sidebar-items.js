@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"fn":["enumerate"],"struct":["AutoRepeat","EnumerateDevices","FFEffect","RawDevice"]};
