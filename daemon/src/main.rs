@@ -1,13 +1,12 @@
 use anyhow::{Context, Result};
-use evdev::{Device, EventType, InputEvent, Key};
+use evdev::{Device, EventType, Key};
 use std::fs;
 use std::io::Write;
-use std::os::unix::io::AsRawFd;
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use tokio::io::unix::AsyncFd;
+use tokio::sync::mpsc;
 use tokio::signal;
 use tracing::info;
 
@@ -49,26 +48,22 @@ fn remove_pid() {
 
 fn remap_grave(target: &str) -> Result<()> {
     let config = format!("[ids]\n\n*\n\n[main]\n\ngrave = {target}\n");
-
     let mut child = Command::new("sudo")
         .args(["-n", "tee", KEYD_CONFIG])
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::null())
         .spawn()
         .context("Failed to spawn sudo tee")?;
-
     if let Some(ref mut stdin) = child.stdin {
         stdin
             .write_all(config.as_bytes())
             .context("Failed to write config")?;
     }
     child.wait().context("Failed to wait for sudo tee")?;
-
     Command::new("sudo")
         .args(["-n", "keyd", "reload"])
         .output()
         .context("Failed to reload keyd")?;
-
     Ok(())
 }
 
@@ -77,19 +72,6 @@ fn wpctl_mute(mute: bool) {
     let _ = Command::new("wpctl")
         .args(["set-mute", "@DEFAULT_AUDIO_SOURCE@", state])
         .output();
-}
-
-fn handle_event(event: InputEvent, ptt_key: Key) {
-    if event.event_type() != EventType::KEY {
-        return;
-    }
-
-    let key = Key::new(event.code());
-    if key == ptt_key {
-        let pressed = event.value() == 1;
-        let muted = !pressed;
-        wpctl_mute(muted);
-    }
 }
 
 struct PttDaemon {
@@ -103,11 +85,8 @@ impl PttDaemon {
         let path = find_keyd_keyboard()?;
         let device =
             Device::open(&path).with_context(|| format!("Failed to open {}", path.display()))?;
-
         info!("Using: {:?}", device.name());
-
         let active = Arc::new(AtomicBool::new(true));
-
         Ok(Self {
             device,
             ptt_key: config.ptt_key,
@@ -142,41 +121,57 @@ impl PttDaemon {
         Ok(())
     }
 
-    async fn run(mut self) -> Result<()> {
-        let (signal_tx, mut signal_rx) = tokio::sync::mpsc::channel::<()>(1);
+    async fn run(self) -> Result<()> {
+        let ptt_key = self.ptt_key;
+        let active = self.active.clone();
+        let device = self.device;
 
-        // Handle SIGUSR1 for toggle
-        {
-            let signal_tx = signal_tx.clone();
-            tokio::spawn(async move {
-                let mut stream = signal::unix::signal(signal::unix::SignalKind::user_defined1())
-                    .expect("Failed to register SIGUSR1 handler");
-                loop {
-                    stream.recv().await;
-                    if signal_tx.send(()).await.is_err() {
-                        break;
+        let (tx, mut rx) = mpsc::unbounded_channel();
+
+        // evdev reader thread
+        std::thread::spawn(move || {
+            let mut device = device;
+            loop {
+                match device.fetch_events() {
+                    Ok(events) => {
+                        for event in events {
+                            if event.event_type() == EventType::KEY && event.code() == ptt_key.code() {
+                                let _ = tx.send(event.value());
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("evdev error: {e}");
+                        std::thread::sleep(std::time::Duration::from_millis(100));
                     }
                 }
-            });
-        }
+            }
+        });
 
-        // Handle SIGTERM/SIGINT for cleanup
+        // SIGUSR1 handler
+        let (sig_tx, mut sig_rx) = mpsc::unbounded_channel();
+        tokio::spawn(async move {
+            let mut stream = signal::unix::signal(signal::unix::SignalKind::user_defined1())
+                .expect("Failed to register SIGUSR1 handler");
+            loop {
+                stream.recv().await;
+                let _ = sig_tx.send(());
+            }
+        });
+
+        // SIGTERM/SIGINT cleanup
         {
             let active = self.active.clone();
             tokio::spawn(async move {
-                let mut sigterm =
-                    signal::unix::signal(signal::unix::SignalKind::terminate()).unwrap();
-                let mut sigint =
-                    signal::unix::signal(signal::unix::SignalKind::interrupt()).unwrap();
+                let mut sigterm = signal::unix::signal(signal::unix::SignalKind::terminate()).unwrap();
+                let mut sigint = signal::unix::signal(signal::unix::SignalKind::interrupt()).unwrap();
                 tokio::select! {
                     _ = sigterm.recv() => {},
                     _ = sigint.recv() => {},
                 }
                 if active.load(Ordering::Relaxed) {
                     let _ = remap_grave("grave");
-                    let _ = Command::new("wpctl")
-                        .args(["set-mute", "@DEFAULT_AUDIO_SOURCE@", "0"])
-                        .output();
+                    wpctl_mute(false);
                     write_state(false);
                 }
                 remove_pid();
@@ -185,30 +180,29 @@ impl PttDaemon {
         }
 
         // Main event loop
-        let fd = self.device.as_raw_fd();
-        let async_fd = AsyncFd::new(fd).context("Failed to create AsyncFd")?;
-        let ptt_key = self.ptt_key;
-
         loop {
             tokio::select! {
-                result = async_fd.readable() => {
-                    match result {
-                        Ok(mut guard) => {
-                            if guard.try_io(|_| {
-                                let events: Vec<_> = self.device.fetch_events().unwrap().collect();
-                                for event in events {
-                                    handle_event(event, ptt_key);
-                                }
-                                Ok::<(), std::io::Error>(())
-                            }).is_err() {
-                                continue;
-                            }
-                        }
-                        Err(_) => continue,
+                Some(value) = rx.recv() => {
+                    if value == 1 {
+                        wpctl_mute(false);
+                    } else if value == 0 {
+                        wpctl_mute(true);
                     }
                 }
-                _ = signal_rx.recv() => {
-                    self.toggle()?;
+                _ = sig_rx.recv() => {
+                    if active.load(Ordering::Relaxed) {
+                        remap_grave("grave")?;
+                        wpctl_mute(false);
+                        write_state(false);
+                        active.store(false, Ordering::Relaxed);
+                        info!("PTT paused");
+                    } else {
+                        remap_grave("f13")?;
+                        wpctl_mute(true);
+                        write_state(true);
+                        active.store(true, Ordering::Relaxed);
+                        info!("PTT active");
+                    }
                 }
             }
         }
@@ -225,15 +219,13 @@ async fn main() -> Result<()> {
         .init();
 
     let config = Config {
-        ptt_key: Key::new(183), // KEY_F13
+        ptt_key: Key::new(183),
         source: None,
     };
 
     let daemon = PttDaemon::new(&config)?;
-
     write_pid()?;
     daemon.activate()?;
-
     info!("PTT daemon started");
 
     daemon.run().await
