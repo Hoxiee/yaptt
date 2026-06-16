@@ -16,13 +16,13 @@ def main():
 
     if state == "1":
         data = {
-            "text": "  PTT",
+            "text": "󰍬",
             "class": "ptt-active",
             "tooltip": "Push-to-Talk: ON\nClick to disable",
         }
     else:
         data = {
-            "text": "  PTT",
+            "text": "󰍭",
             "class": "ptt-inactive",
             "tooltip": "Push-to-Talk: OFF\nClick to enable",
         }
