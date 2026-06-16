@@ -8,3 +8,4 @@ build/
 *.egg
 .env
 target/
+__pycache__/
