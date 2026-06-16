@@ -19,18 +19,6 @@ def main():
     try:
         with open(PID_FILE) as f:
             pid = int(f.read().strip())
-        os.kill(pid, signal.SIGUSR1)
-
-        try:
-            with open(STATE_FILE) as f:
-                state = f.read().strip()
-        except FileNotFoundError:
-            state = "0"
-
-        if state == "1":
-            notify("PTT ON", "Hold Tilde to talk", "microphone-sensitivity-high")
-        else:
-            notify("PTT OFF", "Tilde works normally", "microphone-sensitivity-muted")
     except FileNotFoundError:
         print("PTT daemon is not running", file=sys.stderr)
         sys.exit(1)
@@ -41,6 +29,19 @@ def main():
     except ValueError:
         print("Invalid PID file", file=sys.stderr)
         sys.exit(1)
+
+    try:
+        with open(STATE_FILE) as f:
+            state = f.read().strip()
+    except FileNotFoundError:
+        state = "0"
+
+    os.kill(pid, signal.SIGUSR1)
+
+    if state == "0":
+        notify("PTT ON", "Hold Tilde to talk", "microphone-sensitivity-high")
+    else:
+        notify("PTT OFF", "Tilde works normally", "microphone-sensitivity-muted")
 
 
 if __name__ == "__main__":

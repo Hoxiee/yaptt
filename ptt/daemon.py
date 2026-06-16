@@ -14,6 +14,13 @@ DEVICE_ID_PATH = "/dev/input/by-id"
 STATE_FILE = "/tmp/ptt-state"
 PID_FILE = "/tmp/ptt-daemon.pid"
 
+MODIFIER_KEYS = {
+    ecodes.KEY_LEFTMETA, ecodes.KEY_RIGHTMETA,
+    ecodes.KEY_LEFTCTRL, ecodes.KEY_RIGHTCTRL,
+    ecodes.KEY_LEFTALT, ecodes.KEY_RIGHTALT,
+    ecodes.KEY_LEFTSHIFT, ecodes.KEY_RIGHTSHIFT,
+}
+
 
 def find_keyboards():
     devices = []
@@ -123,6 +130,8 @@ class PTT:
                                 subprocess.Popen(["wpctl", "set-mute", "@DEFAULT_AUDIO_SOURCE@", "0"])
                             elif event.value == 0:
                                 subprocess.Popen(["wpctl", "set-mute", "@DEFAULT_AUDIO_SOURCE@", "1"])
+                            continue
+                        if event.type == ecodes.EV_KEY and event.code in MODIFIER_KEYS:
                             continue
                         virt.write(event.type, event.code, event.value)
                 else:
