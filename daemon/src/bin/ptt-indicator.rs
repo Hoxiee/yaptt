@@ -1,3 +1,4 @@
+use serde_json::json;
 use std::fs;
 
 const STATE_FILE: &str = "/tmp/ptt-state";
@@ -13,8 +14,10 @@ fn main() {
         ("\u{f026d}", "ptt-inactive", "Push-to-Talk: OFF\nClick to enable")
     };
 
-    println!(
-        r#"{{"text":"{}","class":"{}","tooltip":"{}"}}"#,
-        text, class, tooltip
-    );
+    let obj = json!({
+        "text": text,
+        "class": class,
+        "tooltip": tooltip,
+    });
+    println!("{obj}");
 }
