@@ -1,11 +1,13 @@
-use serde::{Deserialize, Serialize};
+use ptt_daemon::{
+    available_keys, load_config, save_config, wpctl_list_sources, PttConfig,
+};
 use std::fs;
 use std::process::Command;
 
 const STATE_FILE: &str = "/tmp/ptt-state";
 const PID_FILE: &str = "/tmp/ptt-daemon.pid";
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 struct PttStatus {
     active: bool,
     pid: Option<u32>,
@@ -42,56 +44,24 @@ fn toggle() -> Result<PttStatus, String> {
 }
 
 #[tauri::command]
-fn get_sources() -> Vec<String> {
-    let output = match Command::new("wpctl").args(["status"]).output() {
-        Ok(o) => o,
-        Err(_) => return Vec::new(),
-    };
+fn get_config() -> PttConfig {
+    load_config()
+}
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let mut sources = Vec::new();
-    let mut in_sources = false;
-
-    for line in stdout.lines() {
-        if line.contains("Sources:") {
-            in_sources = true;
-            continue;
-        }
-        if in_sources {
-            if line.contains("Audio/Source") || line.contains("Stream/Input") {
-                if let Some(name) = line.split_whitespace().last() {
-                    sources.push(name.to_string());
-                }
-            } else if !line.starts_with("  ") && !line.starts_with("├") && !line.starts_with("└")
-            {
-                break;
-            }
-        }
-    }
-
-    sources
+#[tauri::command]
+fn save_config_command(config: PttConfig) -> Result<PttConfig, String> {
+    save_config(&config).map_err(|e| format!("Failed to save: {e}"))?;
+    Ok(config)
 }
 
 #[tauri::command]
 fn get_keys() -> Vec<String> {
-    vec![
-        "grave".into(),
-        "f1".into(),
-        "f2".into(),
-        "f3".into(),
-        "f4".into(),
-        "f5".into(),
-        "f6".into(),
-        "f7".into(),
-        "f8".into(),
-        "f9".into(),
-        "f10".into(),
-        "f11".into(),
-        "f12".into(),
-        "f13".into(),
-        "f14".into(),
-        "f15".into(),
-    ]
+    available_keys()
+}
+
+#[tauri::command]
+fn get_sources() -> Vec<String> {
+    wpctl_list_sources()
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -101,8 +71,10 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_status,
             toggle,
-            get_sources,
-            get_keys
+            get_config,
+            save_config_command,
+            get_keys,
+            get_sources
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

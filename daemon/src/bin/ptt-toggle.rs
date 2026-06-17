@@ -1,3 +1,4 @@
+use ptt_daemon::*;
 use std::fs;
 use std::process::Command;
 
@@ -11,8 +12,8 @@ fn notify(title: &str, body: &str, icon: &str) {
 }
 
 fn main() {
-    let pid = match fs::read_to_string(PID_FILE) {
-        Ok(content) => content.trim().parse::<u32>().unwrap_or_else(|_| {
+    let pid: u32 = match fs::read_to_string(PID_FILE) {
+        Ok(content) => content.trim().parse().unwrap_or_else(|_| {
             eprintln!("Invalid PID file");
             std::process::exit(1);
         }),
@@ -26,17 +27,24 @@ fn main() {
         .map(|s| s.trim().to_string())
         .unwrap_or_else(|_| "0".to_string());
 
-    // Send SIGUSR1
     unsafe {
         libc::kill(pid as i32, libc::SIGUSR1);
     }
 
-    // Wait a bit for daemon to process
     std::thread::sleep(std::time::Duration::from_millis(200));
 
+    let config = load_config();
     if state == "0" {
-        notify("PTT ON", "Hold Tilde to talk", "microphone-sensitivity-high");
+        notify(
+            "PTT ON",
+            &format!("Hold {} to talk", config.ptt_key),
+            "microphone-sensitivity-high",
+        );
     } else {
-        notify("PTT OFF", "Tilde works normally", "microphone-sensitivity-muted");
+        notify(
+            "PTT OFF",
+            &format!("{} works normally", config.ptt_key),
+            "microphone-sensitivity-muted",
+        );
     }
 }

@@ -7,14 +7,49 @@ interface PttStatus {
   pid: number | null;
 }
 
+interface PttConfig {
+  ptt_key: string;
+  remap_key: string;
+  source: string | null;
+}
+
 const status = ref<PttStatus>({ active: false, pid: null });
+const config = ref<PttConfig>({ ptt_key: "grave", remap_key: "f13", source: null });
+const keys = ref<string[]>([]);
+const sources = ref<string[]>([]);
 const loading = ref(false);
+const saving = ref(false);
+const showSettings = ref(false);
 
 async function refreshStatus() {
   try {
     status.value = await invoke("get_status");
   } catch (e) {
     console.error("Failed to get status:", e);
+  }
+}
+
+async function loadConfig() {
+  try {
+    config.value = await invoke("get_config");
+  } catch (e) {
+    console.error("Failed to load config:", e);
+  }
+}
+
+async function loadKeys() {
+  try {
+    keys.value = await invoke("get_keys");
+  } catch (e) {
+    console.error("Failed to load keys:", e);
+  }
+}
+
+async function loadSources() {
+  try {
+    sources.value = await invoke("get_sources");
+  } catch (e) {
+    console.error("Failed to load sources:", e);
   }
 }
 
@@ -28,8 +63,25 @@ async function togglePtt() {
   loading.value = false;
 }
 
+async function saveConfig() {
+  saving.value = true;
+  try {
+    config.value = await invoke("save_config_command", { config: config.value });
+  } catch (e) {
+    console.error("Failed to save config:", e);
+  }
+  saving.value = false;
+}
+
+function formatKey(key: string): string {
+  return key.charAt(0).toUpperCase() + key.slice(1);
+}
+
 onMounted(() => {
   refreshStatus();
+  loadConfig();
+  loadKeys();
+  loadSources();
   setInterval(refreshStatus, 2000);
 });
 </script>
@@ -37,7 +89,12 @@ onMounted(() => {
 <template>
   <div class="app">
     <header class="header">
-      <h1>PTT</h1>
+      <div class="header-row">
+        <h1>PTT</h1>
+        <button class="settings-btn" :class="{ active: showSettings }" @click="showSettings = !showSettings">
+          󰄽
+        </button>
+      </div>
       <p class="subtitle">Push-to-Talk</p>
     </header>
 
@@ -60,22 +117,56 @@ onMounted(() => {
           </span>
         </div>
         <div class="status-row">
-          <span class="status-label">Daemon PID</span>
+          <span class="status-label">Daemon</span>
           <span class="status-value">{{ status.pid ?? "—" }}</span>
         </div>
         <div class="status-row">
           <span class="status-label">PTT Key</span>
-          <span class="status-value">Tilde</span>
+          <span class="status-value">{{ formatKey(config.ptt_key) }}</span>
+        </div>
+        <div class="status-row">
+          <span class="status-label">Remap</span>
+          <span class="status-value">{{ formatKey(config.remap_key) }}</span>
         </div>
         <div class="status-row">
           <span class="status-label">Mic</span>
-          <span class="status-value">{{ status.active ? "Muted (hold to talk)" : "Open" }}</span>
+          <span class="status-value">{{ status.active ? "Hold to talk" : "Open" }}</span>
         </div>
+      </div>
+
+      <div v-if="showSettings" class="settings-card">
+        <h3>Configuration</h3>
+
+        <div class="field">
+          <label>PTT Key</label>
+          <select v-model="config.ptt_key">
+            <option v-for="key in keys" :key="key" :value="key">{{ formatKey(key) }}</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label>Remap To</label>
+          <select v-model="config.remap_key">
+            <option v-for="key in keys" :key="key" :value="key">{{ formatKey(key) }}</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label>Audio Source</label>
+          <select v-model="config.source">
+            <option :value="null">Default</option>
+            <option v-for="src in sources" :key="src" :value="src">{{ src }}</option>
+          </select>
+        </div>
+
+        <button class="save-btn" :disabled="saving" @click="saveConfig">
+          {{ saving ? "Saving..." : "Save" }}
+        </button>
       </div>
     </main>
 
     <footer class="footer">
-      <span>Click to toggle • Hold Tilde to talk</span>
+      <span>Hold {{ formatKey(config.ptt_key) }} to talk</span>
     </footer>
   </div>
 </template>
@@ -115,14 +206,22 @@ body {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 32px;
-  padding: 40px;
+  gap: 24px;
+  padding: 32px;
   width: 100%;
   max-width: 400px;
 }
 
 .header {
   text-align: center;
+  width: 100%;
+}
+
+.header-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
 }
 
 .header h1 {
@@ -132,9 +231,26 @@ body {
   letter-spacing: 2px;
 }
 
+.settings-btn {
+  background: none;
+  border: 1px solid #40484c;
+  border-radius: 8px;
+  color: #8a9296;
+  padding: 4px 8px;
+  cursor: pointer;
+  font-size: 14px;
+  transition: all 0.2s;
+}
+
+.settings-btn:hover,
+.settings-btn.active {
+  border-color: #88d1ec;
+  color: #88d1ec;
+}
+
 .subtitle {
   color: #8a9296;
-  font-size: 12px;
+  font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 3px;
   margin-top: 4px;
@@ -144,13 +260,13 @@ body {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 24px;
+  gap: 20px;
   width: 100%;
 }
 
 .toggle-btn {
-  width: 140px;
-  height: 140px;
+  width: 130px;
+  height: 130px;
   border-radius: 50%;
   border: 2px solid #40484c;
   background: #1b2023;
@@ -160,7 +276,7 @@ body {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 8px;
+  gap: 6px;
   transition: all 0.3s ease;
 }
 
@@ -182,29 +298,38 @@ body {
 }
 
 .icon {
-  font-size: 48px;
+  font-size: 44px;
   line-height: 1;
 }
 
 .label {
-  font-size: 11px;
+  font-size: 10px;
   text-transform: uppercase;
   letter-spacing: 2px;
 }
 
-.status-card {
+.status-card,
+.settings-card {
   width: 100%;
   background: #1b2023;
   border: 1px solid #40484c;
   border-radius: 12px;
-  padding: 16px 20px;
+  padding: 14px 18px;
+}
+
+.settings-card h3 {
+  color: #88d1ec;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  margin-bottom: 12px;
 }
 
 .status-row {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 8px 0;
+  padding: 7px 0;
 }
 
 .status-row + .status-row {
@@ -213,17 +338,70 @@ body {
 
 .status-label {
   color: #8a9296;
-  font-size: 13px;
+  font-size: 12px;
 }
 
 .status-value {
   color: #dee3e6;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 500;
 }
 
 .status-value.active {
   color: #a6e3a1;
+}
+
+.field {
+  margin-bottom: 10px;
+}
+
+.field label {
+  display: block;
+  color: #8a9296;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  margin-bottom: 4px;
+}
+
+.field select {
+  width: 100%;
+  padding: 8px 10px;
+  background: #0f1416;
+  border: 1px solid #40484c;
+  border-radius: 6px;
+  color: #dee3e6;
+  font-family: inherit;
+  font-size: 12px;
+  outline: none;
+  cursor: pointer;
+}
+
+.field select:focus {
+  border-color: #88d1ec;
+}
+
+.save-btn {
+  width: 100%;
+  padding: 8px;
+  background: #88d1ec;
+  border: none;
+  border-radius: 6px;
+  color: #003544;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.2s;
+}
+
+.save-btn:hover {
+  opacity: 0.9;
+}
+
+.save-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .footer {
