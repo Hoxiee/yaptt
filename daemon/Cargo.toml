@@ -1,19 +1,19 @@
 [package]
-name = "ptt-daemon"
+name = "yaptt-daemon"
 version = "0.1.0"
 edition = "2021"
 description = "System-wide push-to-talk for Wayland"
 
 [[bin]]
-name = "ptt-daemon"
+name = "yaptt-daemon"
 path = "src/main.rs"
 
 [[bin]]
-name = "ptt-toggle"
+name = "yaptt-toggle"
 path = "src/bin/ptt-toggle.rs"
 
 [[bin]]
-name = "ptt-indicator"
+name = "yaptt-indicator"
 path = "src/bin/ptt-indicator.rs"
 
 [dependencies]

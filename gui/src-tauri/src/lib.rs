@@ -1,4 +1,4 @@
-use ptt_daemon::{
+use yaptt_daemon::{
     available_keys, load_config, save_config, wpctl_list_sources, PttConfig,
 };
 use std::fs;

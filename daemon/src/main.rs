@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use evdev::{Device, EventType};
-use ptt_daemon::*;
+use yaptt_daemon::*;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
