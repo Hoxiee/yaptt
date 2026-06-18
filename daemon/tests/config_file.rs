@@ -1,4 +1,4 @@
-use ptt_daemon::{load_config_at, save_config_at, PttConfig};
+use yaptt_daemon::{load_config_at, save_config_at, PttConfig};
 use tempfile::TempDir;
 
 struct ConfigTest {
@@ -21,6 +21,7 @@ fn save_and_load() {
         ptt_key: "f5".into(),
         remap_key: "f14".into(),
         source: Some("USB mic".into()),
+        ..Default::default()
     };
     save_config_at(&config, &t.path).unwrap();
     let loaded = load_config_at(&t.path);
@@ -58,6 +59,7 @@ fn roundtrip_all_fields() {
         ptt_key: "leftctrl".into(),
         remap_key: "f20".into(),
         source: Some("Blue Yeti".into()),
+        ..Default::default()
     };
     save_config_at(&config, &t.path).unwrap();
     let loaded = load_config_at(&t.path);
@@ -73,11 +75,13 @@ fn overwrite_config() {
         ptt_key: "f1".into(),
         remap_key: "f13".into(),
         source: None,
+        ..Default::default()
     };
     let c2 = PttConfig {
         ptt_key: "f2".into(),
         remap_key: "f14".into(),
         source: Some("test".into()),
+        ..Default::default()
     };
     save_config_at(&c1, &t.path).unwrap();
     save_config_at(&c2, &t.path).unwrap();

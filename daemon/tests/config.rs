@@ -1,4 +1,4 @@
-use ptt_daemon::PttConfig;
+use yaptt_daemon::PttConfig;
 
 #[test]
 fn default_values() {
@@ -14,6 +14,7 @@ fn custom_values() {
         ptt_key: "f1".into(),
         remap_key: "f14".into(),
         source: Some("my mic".into()),
+        ..Default::default()
     };
     assert_eq!(c.ptt_key, "f1");
     assert_eq!(c.remap_key, "f14");
@@ -35,6 +36,7 @@ fn equality() {
         ptt_key: "f1".into(),
         remap_key: "f13".into(),
         source: None,
+        ..Default::default()
     };
     assert_eq!(a, b);
     assert_ne!(a, c);
@@ -61,6 +63,7 @@ fn key_code_invalid() {
         ptt_key: "nonexistent".into(),
         remap_key: "f13".into(),
         source: None,
+        ..Default::default()
     };
     assert_eq!(c.ptt_key_code(), None);
 }

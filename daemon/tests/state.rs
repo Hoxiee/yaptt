@@ -1,4 +1,4 @@
-use ptt_daemon::{read_state_at, write_state_at};
+use yaptt_daemon::{read_state_at, write_state_at};
 use std::fs;
 use tempfile::TempDir;
 

@@ -1,4 +1,4 @@
-use ptt_daemon::{read_pid_at, remove_file_if_exists};
+use yaptt_daemon::{read_pid_at, remove_file_if_exists};
 use std::fs;
 use tempfile::TempDir;
 

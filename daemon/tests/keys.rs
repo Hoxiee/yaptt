@@ -1,4 +1,4 @@
-use ptt_daemon::{available_keys, key_code_to_name, key_name_to_code};
+use yaptt_daemon::{available_keys, key_code_to_name, key_name_to_code};
 
 #[test]
 fn grave_mapping() {

@@ -1,5 +1,5 @@
 use evdev::Key;
-use ptt_daemon::handle_key_event;
+use yaptt_daemon::handle_key_event;
 
 const F13: Key = Key::new(183);
 const GRAVE: Key = Key::new(41);
