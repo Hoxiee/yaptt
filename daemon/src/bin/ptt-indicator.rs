@@ -15,19 +15,19 @@ fn main() {
 
     let (text, class, tooltip) = if state == "0" {
         (
-            "\u{f026d}", // nf-md-microphone_off
+            "\u{f131}", // nf-fa-microphone_slash
             "ptt-off",
             "Push-to-Talk: OFF\nClick to enable",
         )
     } else if talking {
         (
-            "\u{f1314}", // nf-md-microphone_message
+            "\u{f130}", // nf-fa-microphone
             "ptt-talking",
             "Push-to-Talk: ON (talking)\nRelease to mute",
         )
     } else {
         (
-            "\u{f026c}", // nf-md-microphone
+            "\u{f130}", // nf-fa-microphone
             "ptt-on",
             "Push-to-Talk: ON\nHold grave to talk\nClick to disable",
         )

@@ -53,6 +53,11 @@ impl PttDaemon {
             }
         };
 
+        let loopback_node: Option<String> = loopback.as_ref().map(|lb| {
+            lb.lock().unwrap().node_id.to_string()
+        });
+        let audio_target = loopback_node.as_deref().unwrap_or("@DEFAULT_AUDIO_SOURCE@");
+
         let (tx, mut rx) = mpsc::unbounded_channel();
 
         let uinput_file = create_uinput_keyboard("ptt-virtual-keyboard")?;
@@ -154,16 +159,12 @@ impl PttDaemon {
                 fade_cancel.store(true, Ordering::Relaxed);
                 if let Some(ref lb) = loopback {
                     let lb = lb.lock().unwrap();
-                    wpctl_set_volume(&lb.node_id.to_string(), 1.0);
+                    wpctl_mute(&lb.node_id.to_string(), false);
                     drop(lb);
+                } else {
+                    wpctl_mute_default(false);
                 }
                 if active.load(Ordering::Relaxed) {
-                    if let Some(ref lb) = loopback {
-                        let lb = lb.lock().unwrap();
-                        wpctl_mute(&lb.node_id.to_string(), false);
-                    } else {
-                        wpctl_mute_default(false);
-                    }
                     write_state(false);
                 }
                 clear_talking();
@@ -176,34 +177,27 @@ impl PttDaemon {
             });
         }
 
-        let loopback_node: Option<String> = loopback.as_ref().map(|lb| {
-            lb.lock().unwrap().node_id.to_string()
-        });
-
-        let audio_target = loopback_node.as_deref().unwrap_or("@DEFAULT_AUDIO_SOURCE@");
-
         loop {
             tokio::select! {
                 Some(value) = rx.recv() => {
                     if value == 1 {
                         fade_cancel.store(true, Ordering::Relaxed);
-                        wpctl_set_volume(audio_target, 1.0);
                         wpctl_mute(audio_target, false);
                     } else if value == 0 {
                         fade_cancel.store(true, Ordering::Relaxed);
                         std::thread::sleep(std::time::Duration::from_millis(5));
+                        let vol = wpctl_get_volume(audio_target).unwrap_or(1.0);
                         fade_cancel.store(false, Ordering::Relaxed);
                         let cancel = fade_cancel.clone();
                         let target = audio_target.to_string();
                         std::thread::spawn(move || {
-                            fade_out(&target, fade_duration, cancel);
+                            fade_out(&target, fade_duration, cancel, vol);
                         });
                     }
                 }
                 _ = sig_rx.recv() => {
                     fade_cancel.store(true, Ordering::Relaxed);
                     if active.load(Ordering::Relaxed) {
-                        wpctl_set_volume(audio_target, 1.0);
                         wpctl_mute(audio_target, false);
                         write_state(false);
                         clear_talking();
@@ -273,8 +267,14 @@ async fn main() -> Result<()> {
 
     let daemon = PttDaemon::new(config.clone())?;
     write_pid()?;
-    ptt_activate_with_config(&config, Path::new(STATE_FILE))?;
+    write_state(false);
+    clear_talking();
     info!("PTT daemon started (uinput + pw-loopback mode)");
+
+    let _ = std::process::Command::new("notify-send")
+        .args(["-a", "ptt", "-i", "microphone-sensitivity-high", "-t", "3000",
+               "yaptt-daemon", "PTT daemon started. Click waybar icon to enable."])
+        .output();
 
     daemon.run().await
 }
