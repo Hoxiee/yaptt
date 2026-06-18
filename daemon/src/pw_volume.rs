@@ -12,43 +12,37 @@ pub fn pw_init_once() {
 pub fn set_source_soft_volume(volume: f32) -> bool {
     pw_init_once();
 
-    let mainloop = match pw::main_loop::MainLoopRc::new(None) {
-        Ok(ml) => ml,
-        Err(e) => { tracing::warn!("PipeWire main loop: {}", e); return false; }
-    };
-    let context = match pw::context::ContextRc::new(&mainloop, None) {
-        Ok(ctx) => ctx,
-        Err(e) => { tracing::warn!("PipeWire context: {}", e); return false; }
-    };
-    let core = match context.connect_rc(None) {
-        Ok(c) => c,
-        Err(e) => { tracing::warn!("PipeWire connect: {}", e); return false; }
-    };
-    let registry = match core.get_registry() {
-        Ok(r) => r,
-        Err(e) => { tracing::warn!("PipeWire registry: {}", e); return false; }
-    };
+    let mainloop = pw::main_loop::MainLoopRc::new(None).unwrap();
+    let context = pw::context::ContextRc::new(&mainloop, None).unwrap();
+    let core = context.connect_rc(None).unwrap();
 
-    // Phase 1: collect stream IDs
+    // Get default source ID
+    let target_id = get_default_source_id();
+    if target_id == 0 {
+        tracing::warn!("No default source");
+        return false;
+    }
+
+    // Phase 1: enumerate all globals, collect stream IDs
     let stream_ids: Rc<RefCell<Vec<u32>>> = Rc::new(RefCell::new(Vec::new()));
     let sids = stream_ids.clone();
-    let ml1 = mainloop.clone();
 
-    let _reg = registry.add_listener_local()
-        .global(move |global| {
-            let mc = global.props
-                .and_then(|p| p.get("media.class"))
-                .unwrap_or("");
-            if mc.contains("Stream") || mc.contains("Input") {
-                sids.borrow_mut().push(global.id);
-            }
-        })
-        .register();
+    {
+        let registry = core.get_registry().unwrap();
+        let _reg = registry.add_listener_local()
+            .global(move |global| {
+                let mc = global.props
+                    .and_then(|p| p.get("media.class"))
+                    .unwrap_or("");
+                if mc.contains("Stream") || mc.contains("Input") {
+                    sids.borrow_mut().push(global.id);
+                }
+            })
+            .register();
+        do_roundtrip(&mainloop, &core);
+    }
 
-    do_roundtrip(&mainloop, &core);
     let ids = stream_ids.borrow().clone();
-    drop(_reg);
-
     if ids.is_empty() {
         tracing::warn!("No streams found");
         return false;
@@ -56,46 +50,24 @@ pub fn set_source_soft_volume(volume: f32) -> bool {
 
     tracing::info!("Found {} streams, setting volume {:.0}%", ids.len(), volume * 100.0);
 
-    // Phase 2: bind each stream and set volume
+    // Phase 2: for each stream, enumerate again and bind+set_param
     let count = Rc::new(Cell::new(0u32));
 
-    for target_id in &ids {
-        let tid = *target_id;
-        let found: Rc<Cell<Option<u32>>> = Rc::new(Cell::new(None));
+    for &tid in &ids {
+        let target_id = tid;
+        let cnt = count.clone();
+        let ml = mainloop.clone();
+        let found = Rc::new(Cell::new(false));
         let fc = found.clone();
-        let ml2 = mainloop.clone();
 
-        let _reg2 = registry.add_listener_local()
-            .global(move |global| {
-                if global.id == tid {
-                    fc.set(Some(global.id));
-                    ml2.quit();
-                }
-            })
-            .register();
-
-        do_roundtrip(&mainloop, &core);
-
-        if found.get().is_none() {
-            drop(_reg2);
-            continue;
-        }
-
-        // We found the global, now we need to bind it.
-        // Problem: we can't access the GlobalObject from here.
-        // Solution: do a third pass that binds directly
-
-        let bound_ok = Rc::new(Cell::new(false));
-        let bo = bound_ok.clone();
-        let ml3 = mainloop.clone();
-
-        let _reg3 = registry.add_listener_local()
-            .global(move |global| {
-                if global.id == tid {
+        {
+            let registry = core.get_registry().unwrap();
+            let _reg = registry.add_listener_local()
+                .global(move |global| {
+                    if global.id != target_id || fc.get() { return; }
                     match registry.bind(global) {
                         Ok(node) => {
                             let node: pw::node::Node = node;
-
                             let mut data = Vec::with_capacity(256);
                             let mut builder = spa::pod::builder::Builder::new(&mut data);
 
@@ -104,40 +76,37 @@ pub fn set_source_soft_volume(volume: f32) -> bool {
                                 builder.push_object(&mut frame, spa_sys::SPA_PARAM_Props, 0).unwrap();
                                 builder.add_prop(spa_sys::SPA_PROP_volume, 0).unwrap();
                                 builder.add_float(volume).unwrap();
-                                builder.pop(&mut frame.assume_init());
+                                builder.pop(&mut frame.assume_init_mut());
+
+                                let pod_ptr = &frame.assume_init().pod as *const spa_sys::spa_pod;
+                                let pod = spa::pod::Pod::from_raw(pod_ptr);
+                                node.set_param(spa::param::ParamType::Props, 0, pod);
                             }
 
-                            let pod = unsafe { spa::pod::Pod::from_raw(builder.deref()) };
-                            node.set_param(spa::param::ParamType::Props, 0, &pod);
-                            bo.set(true);
+                            fc.set(true);
+                            cnt.set(cnt.get() + 1);
+                            tracing::info!("Set volume on stream {}", target_id);
                         }
                         Err(e) => {
-                            tracing::warn!("Bind failed for {}: {}", tid, e);
+                            tracing::warn!("Bind failed for stream {}: {}", target_id, e);
                         }
                     }
-                    ml3.quit();
-                }
-            })
-            .register();
+                    ml.quit();
+                })
+                .register();
 
-        do_roundtrip(&mainloop, &core);
-
-        if bound_ok.get() {
-            count.set(count.get() + 1);
-            tracing::info!("Set volume on stream {}", tid);
+            do_roundtrip(&mainloop, &core);
         }
-
-        drop(_reg3);
     }
 
     let c = count.get();
     if c > 0 {
         tracing::info!("Volume set on {} streams: {:.0}%", c, volume * 100.0);
-        true
     } else {
         tracing::warn!("Failed to set volume on any stream");
-        false
     }
+
+    true
 }
 
 fn do_roundtrip(mainloop: &pw::main_loop::MainLoopRc, core: &pw::core::CoreRc) {
