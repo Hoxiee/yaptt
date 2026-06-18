@@ -2,13 +2,13 @@
 
 System-wide push-to-talk for Wayland (PipeWire/PulseAudio).
 
-Uses keyd for dynamic key remapping and evdev for event detection.
-No EVIOCGRAB — niri keybinds and all keys work normally when PTT is active.
+Uses EVIOCGRAB + uinput for keyboard event interception. No external key remapping daemon needed.
 
 ## Features
 
 - System-wide PTT — works in any application
-- keyd-based remapping — no keyboard grab, niri keybinds work
+- EVIOCGRAB + uinput — grabs physical keyboard, creates virtual keyboard
+- niri keybinds work normally via the virtual keyboard
 - PipeWire/PulseAudio support via `wpctl`
 - Waybar integration with toggle indicator
 - SIGUSR1-based toggle (on/off)
@@ -24,18 +24,17 @@ cargo build --release
 ```
 
 Binaries:
-- `target/release/ptt-daemon` — main daemon
-- `target/release/ptt-toggle` — toggle script
-- `target/release/ptt-indicator` — waybar indicator
+- `target/release/yaptt-daemon` — main daemon
+- `target/release/yaptt-toggle` — toggle script
+- `target/release/yaptt-indicator` — waybar indicator
 
 ### Requirements
 
-- keyd system service running
-- User in `keyd` group
-- Sudoers rule for keyd config updates:
+- User in the `input` group (for `/dev/uinput` access):
+  ```bash
+  sudo usermod -aG input $USER
   ```
-  hoshi ALL=(root) NOPASSWD: /usr/bin/keyd reload, /usr/bin/tee /etc/keyd/default.conf
-  ```
+- No keyd dependency required
 
 ### Systemd service
 
@@ -55,30 +54,32 @@ bar layout. Copy `waybar/ptt.css` imports to your style.
 ### Toggle PTT
 
 ```bash
-ptt-toggle
+yaptt-toggle
 # or
 kill -USR1 $(cat /tmp/ptt-daemon.pid)
 ```
 
 ### State
 
-- **ON**: keyd remaps grave → f13, mic is muted. Hold Tilde to unmute. Waybar shows green indicator.
+- **ON**: grave key is remapped to f13 via uinput, mic is muted. Hold Tilde to unmute. Waybar shows green indicator.
 - **OFF**: grave works normally. Mic is unmuted.
 
 ## How it works
 
-1. keyd remaps `grave → f13` when PTT is active
-2. Daemon reads events from keyd virtual keyboard
-3. On f13 press: `wpctl set-mute @DEFAULT_AUDIO_SOURCE@ 0`
-4. On f13 release: `wpctl set-mute @DEFAULT_AUDIO_SOURCE@ 1`
-5. SIGUSR1 toggles between active/paused states
-6. When paused, keyd restores `grave → grave`
+1. Daemon grabs all physical keyboards with EVIOCGRAB
+2. Creates a uinput virtual keyboard
+3. Forwards all events from physical → virtual (so niri sees them)
+4. When PTT active: grave → f13 in forwarding, mic is muted
+5. On f13 (grave) press: `wpctl set-mute @DEFAULT_AUDIO_SOURCE@ 0`
+6. On f13 (grave) release: `wpctl set-mute @DEFAULT_AUDIO_SOURCE@ 1`
+7. SIGUSR1 toggles between active/paused states
+8. When paused, grave forwards as-is (no remap)
 
 ## Binary sizes
 
-- `ptt-daemon`: ~2.2MB
-- `ptt-toggle`: ~500KB
-- `ptt-indicator`: ~500KB
+- `yaptt-daemon`: ~2.5MB
+- `yaptt-toggle`: ~500KB
+- `yaptt-indicator`: ~500KB
 
 ## License
 

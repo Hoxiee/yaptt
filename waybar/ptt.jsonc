@@ -1,9 +1,9 @@
 {
   "custom/ptt": {
     "format": "{}",
-    "exec": "/home/hoshi/Projects/ptt/target/release/ptt-indicator",
+    "exec": "/home/hoshi/Projects/ptt/target/release/yaptt-indicator",
     "return-type": "json",
-    "on-click": "/home/hoshi/Projects/ptt/target/release/ptt-toggle",
+    "on-click": "/home/hoshi/Projects/ptt/target/release/yaptt-toggle",
     "interval": 1,
     "tooltip": true
   }

@@ -6,10 +6,14 @@
   color: @secondary_fixed_dim;
 }
 
-#custom-ptt.ptt-active {
-  color: #a6e3a1;
+#custom-ptt.ptt-off {
+  color: @secondary_fixed_dim;
 }
 
-#custom-ptt.ptt-inactive {
-  color: @secondary_fixed_dim;
+#custom-ptt.ptt-on {
+  color: #f9e2af;
+}
+
+#custom-ptt.ptt-talking {
+  color: #a6e3a1;
 }
