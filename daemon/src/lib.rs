@@ -332,28 +332,6 @@ impl Drop for PipeWireLoopback {
     }
 }
 
-pub fn fade_out(node: &str, duration_ms: u64, cancel: Arc<AtomicBool>) {
-    let steps = 20;
-    let step_duration = Duration::from_millis(duration_ms / steps);
-    let vol_per_step = 1.0 / steps as f32;
-
-    for i in 1..=steps {
-        if cancel.load(Ordering::Relaxed) {
-            return;
-        }
-        let new_vol = 1.0 - vol_per_step * i as f32;
-        if new_vol <= 0.0 {
-            wpctl_set_volume(node, 1.0);
-            wpctl_mute(node, true);
-            return;
-        }
-        wpctl_set_volume(node, new_vol);
-        std::thread::sleep(step_duration);
-    }
-    wpctl_set_volume(node, 1.0);
-    wpctl_mute(node, true);
-}
-
 pub fn wpctl_get_volume(node: &str) -> Option<f32> {
     let output = Command::new("wpctl")
         .args(["get-volume", node])
@@ -366,6 +344,53 @@ pub fn wpctl_get_volume(node: &str) -> Option<f32> {
         }
     }
     None
+}
+
+pub fn pactl_get_source_volume() -> f32 {
+    let output = Command::new("pactl")
+        .args(["get-source-volume", "@DEFAULT_SOURCE@"])
+        .output()
+        .ok()
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .unwrap_or_default();
+    for line in output.lines() {
+        if let Some(pct) = line.split('/').nth(1) {
+            let pct = pct.trim().trim_end_matches('%');
+            if let Ok(v) = pct.parse::<f32>() {
+                return v / 100.0;
+            }
+        }
+    }
+    1.0
+}
+
+pub fn pactl_set_source_volume(vol: f32) {
+    let pct = (vol * 100.0).round() as u32;
+    let _ = Command::new("pactl")
+        .args(["set-source-volume", "@DEFAULT_SOURCE@", &format!("{pct}%")])
+        .output();
+}
+
+pub fn fade_out(node: &str, duration_ms: u64, cancel: Arc<AtomicBool>) {
+    let steps = 20;
+    let step_duration = Duration::from_millis(duration_ms / steps);
+    let vol_per_step = 1.0 / steps as f32;
+
+    for i in 1..=steps {
+        if cancel.load(Ordering::Relaxed) {
+            return;
+        }
+        let new_vol = 1.0 - vol_per_step * i as f32;
+        if new_vol <= 0.0 {
+            pactl_set_source_volume(0.0);
+            wpctl_mute(node, true);
+            return;
+        }
+        pactl_set_source_volume(new_vol);
+        std::thread::sleep(step_duration);
+    }
+    pactl_set_source_volume(0.0);
+    wpctl_mute(node, true);
 }
 
 // ── Device discovery ─────────────────────────────────────────────────────────
