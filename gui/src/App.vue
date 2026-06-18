@@ -16,10 +16,8 @@ interface PttConfig {
 const status = ref<PttStatus>({ active: false, pid: null });
 const config = ref<PttConfig>({ ptt_key: "grave", remap_key: "f13", source: null });
 const keys = ref<string[]>([]);
-const sources = ref<string[]>([]);
 const loading = ref(false);
 const saving = ref(false);
-const showSettings = ref(false);
 
 async function refreshStatus() {
   try {
@@ -42,14 +40,6 @@ async function loadKeys() {
     keys.value = await invoke("get_keys");
   } catch (e) {
     console.error("Failed to load keys:", e);
-  }
-}
-
-async function loadSources() {
-  try {
-    sources.value = await invoke("get_sources");
-  } catch (e) {
-    console.error("Failed to load sources:", e);
   }
 }
 
@@ -81,102 +71,103 @@ onMounted(() => {
   refreshStatus();
   loadConfig();
   loadKeys();
-  loadSources();
   setInterval(refreshStatus, 2000);
 });
 </script>
 
 <template>
   <div class="app">
-    <header class="header">
-      <div class="header-row">
-        <h1>PTT</h1>
-        <button class="settings-btn" :class="{ active: showSettings }" @click="showSettings = !showSettings">
-          󰄽
-        </button>
-      </div>
-      <p class="subtitle">Push-to-Talk</p>
-    </header>
+    <div class="columns">
+      <div class="col-left">
+        <div class="group">
+          <span class="group-label">Push-to-Talk</span>
+          <div class="card">
+            <button class="toggle-row" :class="{ active: status.active }" :disabled="loading" @click="togglePtt">
+              <div class="toggle-label">
+                <span class="toggle-title">{{ status.active ? "Enabled" : "Disabled" }}</span>
+                <span class="toggle-sub">{{ status.active ? "Microphone muted" : "Microphone open" }}</span>
+              </div>
+              <div class="toggle-track">
+                <div class="toggle-thumb"></div>
+              </div>
+            </button>
+          </div>
+        </div>
 
-    <main class="main">
-      <button
-        class="toggle-btn"
-        :class="{ active: status.active }"
-        :disabled="loading"
-        @click="togglePtt"
-      >
-        <span class="icon">{{ status.active ? "󰍬" : "󰍭" }}</span>
-        <span class="label">{{ status.active ? "Active" : "Inactive" }}</span>
-      </button>
-
-      <div class="status-card">
-        <div class="status-row">
-          <span class="status-label">State</span>
-          <span class="status-value" :class="{ active: status.active }">
-            {{ status.active ? "ON" : "OFF" }}
-          </span>
-        </div>
-        <div class="status-row">
-          <span class="status-label">Daemon</span>
-          <span class="status-value">{{ status.pid ?? "—" }}</span>
-        </div>
-        <div class="status-row">
-          <span class="status-label">PTT Key</span>
-          <span class="status-value">{{ formatKey(config.ptt_key) }}</span>
-        </div>
-        <div class="status-row">
-          <span class="status-label">Remap</span>
-          <span class="status-value">{{ formatKey(config.remap_key) }}</span>
-        </div>
-        <div class="status-row">
-          <span class="status-label">Mic</span>
-          <span class="status-value">{{ status.active ? "Hold to talk" : "Open" }}</span>
+        <div class="group">
+          <span class="group-label">Status</span>
+          <div class="card">
+            <div class="list-row">
+              <span class="row-label">Daemon</span>
+              <span class="row-value">{{ status.pid ?? "—" }}</span>
+            </div>
+            <div class="list-row">
+              <span class="row-label">PTT Key</span>
+              <kbd class="kbd">{{ formatKey(config.ptt_key) }}</kbd>
+            </div>
+            <div class="list-row last">
+              <span class="row-label">Remap</span>
+              <kbd class="kbd">{{ formatKey(config.remap_key) }}</kbd>
+            </div>
+          </div>
         </div>
       </div>
 
-      <div v-if="showSettings" class="settings-card">
-        <h3>Configuration</h3>
-
-        <div class="field">
-          <label>PTT Key</label>
-          <select v-model="config.ptt_key">
-            <option v-for="key in keys" :key="key" :value="key">{{ formatKey(key) }}</option>
-          </select>
+      <div class="col-right">
+        <div class="group">
+          <span class="group-label">Configuration</span>
+          <div class="card">
+            <div class="field-row">
+              <label class="field-label">PTT Key</label>
+              <div class="select-wrap">
+                <select v-model="config.ptt_key">
+                  <option v-for="key in keys" :key="key" :value="key">{{ formatKey(key) }}</option>
+                </select>
+                <svg class="select-arrow" width="10" height="10" viewBox="0 0 12 12" fill="none">
+                  <path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+              </div>
+            </div>
+            <div class="field-row last">
+              <label class="field-label">Remap To</label>
+              <div class="select-wrap">
+                <select v-model="config.remap_key">
+                  <option v-for="key in keys" :key="key" :value="key">{{ formatKey(key) }}</option>
+                </select>
+                <svg class="select-arrow" width="10" height="10" viewBox="0 0 12 12" fill="none">
+                  <path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+              </div>
+            </div>
+          </div>
         </div>
 
-        <div class="field">
-          <label>Remap To</label>
-          <select v-model="config.remap_key">
-            <option v-for="key in keys" :key="key" :value="key">{{ formatKey(key) }}</option>
-          </select>
+        <div class="group">
+          <span class="group-label">How to use</span>
+          <div class="card">
+            <p class="help-text">Hold <kbd class="kbd inline">{{ formatKey(config.ptt_key) }}</kbd> to unmute your microphone while PTT is enabled.</p>
+          </div>
         </div>
 
-        <div class="field">
-          <label>Audio Source</label>
-          <select v-model="config.source">
-            <option :value="null">Default</option>
-            <option v-for="src in sources" :key="src" :value="src">{{ src }}</option>
-          </select>
+        <div class="actions">
+          <button class="btn-suggested" :disabled="saving" @click="saveConfig">
+            {{ saving ? "Saving\u2026" : "Apply" }}
+          </button>
         </div>
-
-        <button class="save-btn" :disabled="saving" @click="saveConfig">
-          {{ saving ? "Saving..." : "Save" }}
-        </button>
       </div>
-    </main>
-
-    <footer class="footer">
-      <span>Hold {{ formatKey(config.ptt_key) }} to talk</span>
-    </footer>
+    </div>
   </div>
 </template>
 
 <style>
 :root {
-  font-family: "JetBrainsMono Nerd Font", Inter, system-ui, sans-serif;
-  font-size: 14px;
-  color: #dee3e6;
-  background-color: #0f1416;
+  font-family: "Cantarell", "Noto Sans", system-ui, sans-serif;
+  font-size: 13px;
+  line-height: 1.5;
+  color: #ffffff;
+  background-color: #242424;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 * {
@@ -203,210 +194,254 @@ body {
 
 <style scoped>
 .app {
+  width: 100%;
+  height: 100vh;
+  display: flex;
+}
+
+.columns {
+  display: flex;
+  gap: 16px;
+  width: 100%;
+  padding: 16px 20px;
+}
+
+.col-left,
+.col-right {
+  flex: 1;
   display: flex;
   flex-direction: column;
-  align-items: center;
-  gap: 24px;
-  padding: 32px;
-  width: 100%;
-  max-width: 400px;
-}
-
-.header {
-  text-align: center;
-  width: 100%;
-}
-
-.header-row {
-  display: flex;
-  align-items: center;
-  justify-content: center;
   gap: 12px;
+  min-width: 0;
 }
 
-.header h1 {
-  font-size: 28px;
-  font-weight: 700;
-  color: #88d1ec;
-  letter-spacing: 2px;
+.group {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
 }
 
-.settings-btn {
-  background: none;
-  border: 1px solid #40484c;
-  border-radius: 8px;
-  color: #8a9296;
-  padding: 4px 8px;
-  cursor: pointer;
-  font-size: 14px;
-  transition: all 0.2s;
-}
-
-.settings-btn:hover,
-.settings-btn.active {
-  border-color: #88d1ec;
-  color: #88d1ec;
-}
-
-.subtitle {
-  color: #8a9296;
+.group-label {
   font-size: 11px;
+  font-weight: 700;
+  color: #929292;
   text-transform: uppercase;
-  letter-spacing: 3px;
-  margin-top: 4px;
+  letter-spacing: 0.5px;
+  padding-left: 2px;
 }
 
-.main {
+.card {
+  background: #303030;
+  border: 1px solid #3d3d3d;
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.toggle-row {
   display: flex;
-  flex-direction: column;
   align-items: center;
-  gap: 20px;
+  justify-content: space-between;
   width: 100%;
-}
-
-.toggle-btn {
-  width: 130px;
-  height: 130px;
-  border-radius: 50%;
-  border: 2px solid #40484c;
-  background: #1b2023;
-  color: #8a9296;
+  padding: 12px 16px;
+  background: transparent;
+  border: none;
   cursor: pointer;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  transition: all 0.3s ease;
+  text-align: left;
+  transition: background 0.15s ease;
 }
 
-.toggle-btn:hover {
-  border-color: #88d1ec;
-  background: #252b2d;
+.toggle-row:hover {
+  background: rgba(255, 255, 255, 0.03);
 }
 
-.toggle-btn.active {
-  border-color: #a6e3a1;
-  background: #1a2e1a;
-  color: #a6e3a1;
-  box-shadow: 0 0 30px rgba(166, 227, 161, 0.15);
-}
-
-.toggle-btn:disabled {
+.toggle-row:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }
 
-.icon {
-  font-size: 44px;
-  line-height: 1;
+.toggle-row.active .toggle-title {
+  color: #3584e4;
 }
 
-.label {
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 2px;
+.toggle-row.active .toggle-track {
+  background: #3584e4;
 }
 
-.status-card,
-.settings-card {
-  width: 100%;
-  background: #1b2023;
-  border: 1px solid #40484c;
-  border-radius: 12px;
-  padding: 14px 18px;
+.toggle-row.active .toggle-thumb {
+  transform: translateX(18px);
+  background: #ffffff;
 }
 
-.settings-card h3 {
-  color: #88d1ec;
-  font-size: 13px;
-  text-transform: uppercase;
-  letter-spacing: 1px;
-  margin-bottom: 12px;
-}
-
-.status-row {
+.toggle-label {
   display: flex;
-  justify-content: space-between;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.toggle-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #ffffff;
+  transition: color 0.15s ease;
+}
+
+.toggle-sub {
+  font-size: 12px;
+  color: #929292;
+}
+
+.toggle-track {
+  width: 40px;
+  height: 22px;
+  background: #555555;
+  border-radius: 11px;
+  position: relative;
+  flex-shrink: 0;
+  transition: background 0.2s ease;
+}
+
+.toggle-thumb {
+  width: 16px;
+  height: 16px;
+  background: #cccccc;
+  border-radius: 50%;
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  transition: transform 0.2s ease, background 0.2s ease;
+}
+
+.list-row {
+  display: flex;
   align-items: center;
-  padding: 7px 0;
+  justify-content: space-between;
+  padding: 8px 16px;
 }
 
-.status-row + .status-row {
-  border-top: 1px solid #252b2d;
+.list-row:not(.last) {
+  border-bottom: 1px solid #3d3d3d;
 }
 
-.status-label {
-  color: #8a9296;
-  font-size: 12px;
+.row-label {
+  font-size: 13px;
+  color: #d0d0d0;
 }
 
-.status-value {
-  color: #dee3e6;
-  font-size: 12px;
+.row-value {
+  font-size: 13px;
   font-weight: 500;
+  color: #ffffff;
 }
 
-.status-value.active {
-  color: #a6e3a1;
-}
-
-.field {
-  margin-bottom: 10px;
-}
-
-.field label {
-  display: block;
-  color: #8a9296;
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 1px;
-  margin-bottom: 4px;
-}
-
-.field select {
-  width: 100%;
-  padding: 8px 10px;
-  background: #0f1416;
-  border: 1px solid #40484c;
-  border-radius: 6px;
-  color: #dee3e6;
-  font-family: inherit;
-  font-size: 12px;
-  outline: none;
-  cursor: pointer;
-}
-
-.field select:focus {
-  border-color: #88d1ec;
-}
-
-.save-btn {
-  width: 100%;
-  padding: 8px;
-  background: #88d1ec;
-  border: none;
-  border-radius: 6px;
-  color: #003544;
+.kbd {
+  display: inline-flex;
+  align-items: center;
+  height: 24px;
+  padding: 0 8px;
   font-family: inherit;
   font-size: 12px;
   font-weight: 600;
+  color: #ffffff;
+  background: #3d3d3d;
+  border: 1px solid #555555;
+  border-radius: 6px;
+}
+
+.kbd.inline {
+  height: auto;
+  padding: 1px 6px;
+}
+
+.help-text {
+  font-size: 13px;
+  color: #d0d0d0;
+  padding: 10px 16px;
+  line-height: 1.5;
+}
+
+.field-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 16px;
+}
+
+.field-row:not(.last) {
+  border-bottom: 1px solid #3d3d3d;
+}
+
+.field-label {
+  font-size: 13px;
+  color: #d0d0d0;
+  flex-shrink: 0;
+}
+
+.select-wrap {
+  position: relative;
+}
+
+.select-wrap select {
+  appearance: none;
+  min-width: 140px;
+  padding: 6px 30px 6px 10px;
+  background: #242424;
+  border: 1px solid #555555;
+  border-radius: 8px;
+  color: #ffffff;
+  font-family: inherit;
+  font-size: 13px;
+  outline: none;
   cursor: pointer;
-  transition: opacity 0.2s;
+  transition: border-color 0.15s ease;
 }
 
-.save-btn:hover {
-  opacity: 0.9;
+.select-wrap select:hover {
+  border-color: #666666;
 }
 
-.save-btn:disabled {
+.select-wrap select:focus {
+  border-color: #3584e4;
+}
+
+.select-arrow {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: #929292;
+  pointer-events: none;
+}
+
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: auto;
+}
+
+.btn-suggested {
+  padding: 8px 24px;
+  background: #3584e4;
+  border: none;
+  border-radius: 8px;
+  color: #ffffff;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.btn-suggested:hover {
+  background: #4394e8;
+}
+
+.btn-suggested:active {
+  background: #2e75c9;
+}
+
+.btn-suggested:disabled {
   opacity: 0.5;
   cursor: not-allowed;
-}
-
-.footer {
-  color: #40484c;
-  font-size: 11px;
-  text-align: center;
 }
 </style>

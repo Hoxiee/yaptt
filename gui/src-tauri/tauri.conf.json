@@ -13,8 +13,8 @@
     "windows": [
       {
         "title": "PTT",
-        "width": 420,
-        "height": 520,
+        "width": 700,
+        "height": 440,
         "resizable": false,
         "decorations": true
       }

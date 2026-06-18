@@ -1,8 +1,5 @@
-use yaptt_daemon::{
-    available_keys, load_config, save_config, wpctl_list_sources, PttConfig,
-};
+use yaptt_daemon::{available_keys, load_config, save_config, PttConfig};
 use std::fs;
-use std::process::Command;
 
 const STATE_FILE: &str = "/tmp/ptt-state";
 const PID_FILE: &str = "/tmp/ptt-daemon.pid";
@@ -59,11 +56,6 @@ fn get_keys() -> Vec<String> {
     available_keys()
 }
 
-#[tauri::command]
-fn get_sources() -> Vec<String> {
-    wpctl_list_sources()
-}
-
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -74,7 +66,6 @@ pub fn run() {
             get_config,
             save_config_command,
             get_keys,
-            get_sources
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
