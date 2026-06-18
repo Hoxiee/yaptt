@@ -11,6 +11,7 @@ use tokio::signal;
 use tokio::sync::mpsc;
 use tracing::{info, warn};
 use yaptt_daemon::*;
+use yaptt_daemon::pw_volume;
 
 struct PttDaemon {
     devices: Vec<(std::path::PathBuf, String)>,
@@ -189,9 +190,8 @@ impl PttDaemon {
                         std::thread::sleep(std::time::Duration::from_millis(5));
                         fade_cancel.store(false, Ordering::Relaxed);
                         let cancel = fade_cancel.clone();
-                        let target = audio_target.to_string();
                         std::thread::spawn(move || {
-                            fade_out(&target, fade_duration, cancel);
+                            fade_out_soft(fade_duration, cancel);
                         });
                     }
                 }

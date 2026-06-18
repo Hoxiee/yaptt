@@ -11,6 +11,8 @@ use std::sync::Arc;
 use std::time::Duration;
 use tracing::info;
 
+pub mod pw_volume;
+
 pub const STATE_FILE: &str = "/tmp/ptt-state";
 pub const TALKING_FILE: &str = "/tmp/ptt-talking";
 pub const PID_FILE: &str = "/tmp/ptt-daemon.pid";
@@ -369,6 +371,26 @@ pub fn pactl_set_source_volume(vol: f32) {
     let _ = Command::new("pactl")
         .args(["set-source-volume", "@DEFAULT_SOURCE@", &format!("{pct}%")])
         .output();
+}
+
+pub fn fade_out_soft(duration_ms: u64, cancel: Arc<AtomicBool>) {
+    let steps = 20;
+    let step_duration = Duration::from_millis(duration_ms / steps);
+    let vol_per_step = 1.0 / steps as f32;
+
+    for i in 1..=steps {
+        if cancel.load(Ordering::Relaxed) {
+            return;
+        }
+        let new_vol = 1.0 - vol_per_step * i as f32;
+        if new_vol <= 0.0 {
+            crate::pw_volume::set_source_soft_volume(0.0);
+            return;
+        }
+        crate::pw_volume::set_source_soft_volume(new_vol);
+        std::thread::sleep(step_duration);
+    }
+    crate::pw_volume::set_source_soft_volume(0.0);
 }
 
 pub fn fade_out(node: &str, duration_ms: u64, cancel: Arc<AtomicBool>) {
