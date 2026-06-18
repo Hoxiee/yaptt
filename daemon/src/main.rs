@@ -182,16 +182,16 @@ impl PttDaemon {
                 Some(value) = rx.recv() => {
                     if value == 1 {
                         fade_cancel.store(true, Ordering::Relaxed);
+                        wpctl_set_volume(audio_target, 1.0);
                         wpctl_mute(audio_target, false);
                     } else if value == 0 {
                         fade_cancel.store(true, Ordering::Relaxed);
                         std::thread::sleep(std::time::Duration::from_millis(5));
-                        let vol = wpctl_get_volume(audio_target).unwrap_or(1.0);
                         fade_cancel.store(false, Ordering::Relaxed);
                         let cancel = fade_cancel.clone();
                         let target = audio_target.to_string();
                         std::thread::spawn(move || {
-                            fade_out(&target, fade_duration, cancel, vol);
+                            fade_out(&target, fade_duration, cancel);
                         });
                     }
                 }

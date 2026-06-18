@@ -332,26 +332,25 @@ impl Drop for PipeWireLoopback {
     }
 }
 
-pub fn fade_out(node: &str, duration_ms: u64, cancel: Arc<AtomicBool>, restore_vol: f32) {
-    let start_vol = wpctl_get_volume(node).unwrap_or(1.0);
+pub fn fade_out(node: &str, duration_ms: u64, cancel: Arc<AtomicBool>) {
     let steps = 20;
     let step_duration = Duration::from_millis(duration_ms / steps);
-    let vol_per_step = start_vol / steps as f32;
+    let vol_per_step = 1.0 / steps as f32;
 
     for i in 1..=steps {
         if cancel.load(Ordering::Relaxed) {
             return;
         }
-        let new_vol = start_vol - vol_per_step * i as f32;
+        let new_vol = 1.0 - vol_per_step * i as f32;
         if new_vol <= 0.0 {
-            wpctl_set_volume(node, restore_vol);
+            wpctl_set_volume(node, 1.0);
             wpctl_mute(node, true);
             return;
         }
         wpctl_set_volume(node, new_vol);
         std::thread::sleep(step_duration);
     }
-    wpctl_set_volume(node, restore_vol);
+    wpctl_set_volume(node, 1.0);
     wpctl_mute(node, true);
 }
 
