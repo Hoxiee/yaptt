@@ -23,6 +23,19 @@ test:
 build:
     cargo build --release --manifest-path daemon/Cargo.toml
 
+# Dev install: build + install binaries and service
+dev: build
+    sudo cp target/release/yaptt-daemon /usr/bin/
+    sudo cp target/release/yaptt-toggle /usr/bin/
+    sudo cp target/release/yaptt-indicator /usr/bin/
+    sudo cp systemd/ptt.service /usr/lib/systemd/user/
+    systemctl --user daemon-reload
+    echo "Installed. Run: systemctl --user enable --now ptt"
+
+# Build and install AUR package from PKGBUILD
+pkg:
+    makepkg -si
+
 # Full release: bump version, test, build, tag, push
 release:
     #!/usr/bin/env bash

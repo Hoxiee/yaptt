@@ -29,13 +29,26 @@ Physical keyboard ──EVIOCGRAB──▸ PTT daemon ──uinput──▸ Your
 
 ## Install
 
-### System requirements
+### Quick install (from GitHub Release)
+
+```bash
+curl -sL https://raw.githubusercontent.com/Hoxiee/yaptt/master/install.sh | bash
+systemctl --user enable --now ptt
+```
+
+### From AUR
+
+```bash
+yay -S yaptt-bin
+```
+
+### Build from source
+
+#### Requirements
 
 - Linux with PipeWire or PulseAudio
 - User in the `input` group: `sudo usermod -aG input $USER`
 - `wpctl` (PipeWire) or `pactl` (PulseAudio) in PATH
-
-### Build from source
 
 ```bash
 cargo build --release

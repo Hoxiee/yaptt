@@ -38,3 +38,11 @@ git add PKGBUILD .SRCINFO
 git commit -m "update to X.Y.Z"
 git push
 ```
+
+## Install without AUR
+
+Users can install directly from GitHub:
+
+```bash
+curl -sL https://raw.githubusercontent.com/Hoxiee/yaptt/master/install.sh | bash
+```
