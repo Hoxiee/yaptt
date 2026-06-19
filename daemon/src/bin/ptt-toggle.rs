@@ -5,7 +5,12 @@
 
 use std::fs;
 use std::process::Command;
+use clap::Parser;
 use yaptt_daemon::*;
+
+#[derive(Parser)]
+#[command(name = "yaptt-toggle", version, about = "Toggle the PTT daemon on/off")]
+struct Cli {}
 
 const STATE_FILE: &str = "/tmp/ptt-state";
 const PID_FILE: &str = "/tmp/ptt-daemon.pid";
@@ -17,6 +22,8 @@ fn notify(title: &str, body: &str, icon: &str) {
 }
 
 fn main() {
+    Cli::parse();
+
     let pid: u32 = match fs::read_to_string(PID_FILE) {
         Ok(content) => content.trim().parse().unwrap_or_else(|_| {
             eprintln!("Invalid PID file");

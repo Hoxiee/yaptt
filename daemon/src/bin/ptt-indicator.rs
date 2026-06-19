@@ -3,13 +3,20 @@
 //! Outputs JSON with `text`, `class`, and `tooltip` fields.
 //! States: OFF (muted icon), ON (active, waiting), TALKING (key held).
 
+use clap::Parser;
 use serde_json::json;
 use std::fs;
+
+#[derive(Parser)]
+#[command(name = "yaptt-indicator", version, about = "Waybar indicator for the PTT daemon")]
+struct Cli {}
 
 const STATE_FILE: &str = "/tmp/ptt-state";
 const TALKING_FILE: &str = "/tmp/ptt-talking";
 
 fn main() {
+    Cli::parse();
+
     let state = fs::read_to_string(STATE_FILE)
         .map(|s| s.trim().to_string())
         .unwrap_or_else(|_| "0".to_string());

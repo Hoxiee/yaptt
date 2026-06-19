@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use clap::Parser;
 use evdev::Device;
 use input_linux::{EventKind, InputId, UInputHandle};
 use std::fs::File;
@@ -11,6 +12,10 @@ use tokio::signal;
 use tokio::sync::mpsc;
 use tracing::{info, warn};
 use yaptt_daemon::*;
+
+#[derive(Parser)]
+#[command(name = "yaptt-daemon", version, about = "System-wide push-to-talk daemon for Wayland")]
+struct Cli {}
 
 struct PttDaemon {
     devices: Vec<(std::path::PathBuf, String)>,
@@ -281,6 +286,7 @@ fn create_uinput_keyboard(name: &str) -> Result<File> {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    Cli::parse();
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
