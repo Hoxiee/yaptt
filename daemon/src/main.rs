@@ -230,10 +230,13 @@ impl PttDaemon {
                         active.store(false, Ordering::Relaxed);
                         info!("PTT paused — mic unmuted at {:.0}%", vol * 100.0);
                     } else {
+                        // Capture current user volume before muting
+                        let current = wpctl_get_volume("@DEFAULT_AUDIO_SOURCE@").unwrap_or(1.0);
+                        *saved_volume.lock().unwrap() = current;
                         wpctl_mute_default(true);
                         write_state(true);
                         active.store(true, Ordering::Relaxed);
-                        info!("PTT active — mic MUTED, hold {} to talk", self.config.ptt_key);
+                        info!("PTT active — mic MUTED at {:.0}%, hold {} to talk", current * 100.0, self.config.ptt_key);
                     }
                 }
             }
