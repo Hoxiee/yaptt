@@ -1,3 +1,8 @@
+//! Toggle the PTT daemon on/off via SIGUSR1.
+//!
+//! Reads the daemon PID from `/tmp/ptt-daemon.pid`, sends SIGUSR1,
+//! then shows a desktop notification with the new state.
+
 use yaptt_daemon::*;
 use std::fs;
 use std::process::Command;

@@ -49,9 +49,9 @@ impl PttDaemon {
         info!("Mic unmuted, ready for PTT");
 
         let (tx, mut rx) = mpsc::unbounded_channel();
-
         let uinput_file = create_uinput_keyboard("ptt-virtual-keyboard")?;
 
+        // Spawn one thread per physical keyboard to grab and forward events.
         for (path, name) in &self.devices {
             let path = path.clone();
             let name = name.clone();
@@ -82,6 +82,7 @@ impl PttDaemon {
                                 let mut code = ev.code();
                                 let raw_type = ev.event_type().0;
 
+                                // Intercept PTT key when active (EV_KEY=1, down/up only)
                                 if raw_type == 1 && ev.code() == ptt_key_code && ev.value() <= 1 {
                                     if active.load(Ordering::Relaxed) {
                                         let _ = tx.send(ev.value());
@@ -90,6 +91,7 @@ impl PttDaemon {
                                     }
                                 }
 
+                                // Forward only EV_KEY(1) and EV_SYN(0)
                                 if raw_type != 1 && raw_type != 0 {
                                     continue;
                                 }
@@ -123,6 +125,7 @@ impl PttDaemon {
             });
         }
 
+        // SIGUSR1 handler — toggle PTT on/off
         let (sig_tx, mut sig_rx) = mpsc::unbounded_channel();
         tokio::spawn(async move {
             let mut stream = signal::unix::signal(signal::unix::SignalKind::user_defined1())
@@ -133,6 +136,7 @@ impl PttDaemon {
             }
         });
 
+        // SIGTERM/SIGINT handler — clean shutdown
         {
             let active = self.active.clone();
             tokio::spawn(async move {
@@ -160,6 +164,7 @@ impl PttDaemon {
             wpctl_get_volume("@DEFAULT_AUDIO_SOURCE@").unwrap_or(1.0)
         ));
 
+        // Main event loop
         loop {
             tokio::select! {
                 Some(value) = rx.recv() => {
@@ -167,6 +172,7 @@ impl PttDaemon {
                         continue;
                     }
                     if value == 1 {
+                        // PTT key pressed — cancel fade, restore volume, unmute
                         fade_cancel.store(true, Ordering::Relaxed);
                         if let Some(h) = fade_handle.lock().unwrap().take() {
                             let _ = h.join();
@@ -176,6 +182,7 @@ impl PttDaemon {
                         wpctl_mute_default(false);
                         info!("PTT pressed — mic UNMUTED at {:.0}%", vol * 100.0);
                     } else if value == 0 {
+                        // PTT key released — save volume, start fade-out
                         let current = wpctl_get_volume("@DEFAULT_AUDIO_SOURCE@").unwrap_or(1.0);
                         *saved_volume.lock().unwrap() = current;
 
@@ -209,6 +216,7 @@ impl PttDaemon {
                     }
                 }
                 _ = sig_rx.recv() => {
+                    // SIGUSR1 — toggle PTT mode
                     fade_cancel.store(true, Ordering::Relaxed);
                     if let Some(h) = fade_handle.lock().unwrap().take() {
                         let _ = h.join();
@@ -233,6 +241,7 @@ impl PttDaemon {
     }
 }
 
+/// Create a uinput virtual keyboard device.
 fn create_uinput_keyboard(name: &str) -> Result<File> {
     let uinput_file = File::options()
         .read(true)
@@ -287,7 +296,7 @@ async fn main() -> Result<()> {
     write_pid()?;
     write_state(false);
     clear_talking();
-    info!("PTT daemon started (mute-based mode)");
+    info!("PTT daemon started");
 
     let _ = std::process::Command::new("notify-send")
         .args(["-a", "ptt", "-i", "microphone-sensitivity-high", "-t", "3000",

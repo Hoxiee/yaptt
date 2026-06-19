@@ -1,3 +1,8 @@
+//! Waybar indicator for the PTT daemon.
+//!
+//! Outputs JSON with `text`, `class`, and `tooltip` fields.
+//! States: OFF (muted icon), ON (active, waiting), TALKING (key held).
+
 use serde_json::json;
 use std::fs;
 

@@ -1,3 +1,8 @@
+//! Core library for the yaptt push-to-talk daemon.
+//!
+//! Provides configuration, state management, key mapping, device discovery,
+//! and wpctl/pactl helpers for controlling PipeWire/PulseAudio microphone state.
+
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -5,6 +10,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use tracing::info;
+
+// ── Constants ────────────────────────────────────────────────────────────────
 
 pub const STATE_FILE: &str = "/tmp/ptt-state";
 pub const TALKING_FILE: &str = "/tmp/ptt-talking";
@@ -14,11 +21,13 @@ pub const CONFIG_FILE: &str = "config.json";
 
 // ── Key name mapping ─────────────────────────────────────────────────────────
 
+/// Convert a key name (e.g. "grave", "f1", "leftctrl") to an evdev key code.
 pub fn key_name_to_code(name: &str) -> Option<u16> {
     let map = key_name_map();
     map.get(name).copied()
 }
 
+/// Convert an evdev key code to a key name.
 pub fn key_code_to_name(code: u16) -> Option<String> {
     let map = key_name_map();
     map.iter()
@@ -26,6 +35,7 @@ pub fn key_code_to_name(code: u16) -> Option<String> {
         .map(|(name, _)| name.clone())
 }
 
+/// List all supported key names, sorted alphabetically.
 pub fn available_keys() -> Vec<String> {
     let map = key_name_map();
     let mut keys: Vec<String> = map.keys().cloned().collect();
@@ -78,11 +88,16 @@ fn key_name_map() -> HashMap<String, u16> {
 
 // ── Configuration ────────────────────────────────────────────────────────────
 
+/// Daemon configuration, loaded from `~/.config/yaptt/config.json`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct PttConfig {
+    /// Key that activates push-to-talk when held (e.g. "grave", "f5").
     pub ptt_key: String,
+    /// Key code forwarded to apps while PTT key is held (e.g. "f13").
     pub remap_key: String,
+    /// Optional audio source override (reserved for future use).
     pub source: Option<String>,
+    /// Fade-out duration in milliseconds when releasing the PTT key.
     #[serde(default = "default_fade_duration_ms")]
     pub fade_duration_ms: u64,
 }
@@ -116,20 +131,24 @@ impl PttConfig {
     }
 }
 
+/// Returns `~/.config/yaptt/`.
 pub fn config_dir() -> PathBuf {
     dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join(DEFAULT_CONFIG_DIR)
 }
 
+/// Returns `~/.config/yaptt/config.json`.
 pub fn config_path() -> PathBuf {
     config_dir().join(CONFIG_FILE)
 }
 
+/// Load config from the default path, falling back to defaults on error.
 pub fn load_config() -> PttConfig {
     load_config_at(&config_path())
 }
 
+/// Load config from an explicit path.
 pub fn load_config_at(path: &Path) -> PttConfig {
     fs::read_to_string(path)
         .ok()
@@ -137,10 +156,12 @@ pub fn load_config_at(path: &Path) -> PttConfig {
         .unwrap_or_default()
 }
 
+/// Save config to the default path.
 pub fn save_config(config: &PttConfig) -> Result<()> {
     save_config_at(config, &config_path())
 }
 
+/// Save config to an explicit path, creating parent directories as needed.
 pub fn save_config_at(config: &PttConfig, path: &Path) -> Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).context("Failed to create config dir")?;
@@ -152,28 +173,33 @@ pub fn save_config_at(config: &PttConfig, path: &Path) -> Result<()> {
 
 // ── State / PID ─────────────────────────────────────────────────────────────
 
+/// Read PTT active state from a file. Returns `true` if the file contains "1".
 pub fn read_state_at(path: &Path) -> bool {
     fs::read_to_string(path)
         .map(|s| s.trim() == "1")
         .unwrap_or(false)
 }
 
+/// Write PTT active state to a file.
 pub fn write_state_at(path: &Path, active: bool) {
     let _ = fs::write(path, if active { "1" } else { "0" });
 }
 
+/// Read a PID from a file.
 pub fn read_pid_at(path: &Path) -> Option<u32> {
     fs::read_to_string(path)
         .ok()
         .and_then(|s| s.trim().parse().ok())
 }
 
+/// Write the current process PID to a file.
 pub fn write_pid_at(path: &Path) -> Result<u32> {
     let pid = std::process::id();
     fs::write(path, pid.to_string()).context("Failed to write PID file")?;
     Ok(pid)
 }
 
+/// Remove a file if it exists (no error on missing).
 pub fn remove_file_if_exists(path: &Path) {
     let _ = fs::remove_file(path);
 }
@@ -186,10 +212,12 @@ pub fn write_state(active: bool) {
     write_state_at(Path::new(STATE_FILE), active)
 }
 
+/// Write the "talking" indicator file (grave key is held).
 pub fn write_talking(talking: bool) {
     let _ = fs::write(TALKING_FILE, if talking { "1" } else { "0" });
 }
 
+/// Remove the "talking" indicator file.
 pub fn clear_talking() {
     let _ = fs::remove_file(TALKING_FILE);
 }
@@ -208,6 +236,7 @@ pub fn remove_pid() {
 
 // ── wpctl / pactl helpers ───────────────────────────────────────────────────
 
+/// Mute or unmute the default audio source via `wpctl set-mute`.
 pub fn wpctl_mute_default(mute: bool) {
     let state = if mute { "1" } else { "0" };
     let _ = Command::new("wpctl")
@@ -215,6 +244,7 @@ pub fn wpctl_mute_default(mute: bool) {
         .output();
 }
 
+/// Set volume for a wpctl node (clamped to 0.0–1.0).
 pub fn wpctl_set_volume(node: &str, vol: f32) {
     let vol = vol.clamp(0.0, 1.0);
     let _ = Command::new("wpctl")
@@ -222,6 +252,7 @@ pub fn wpctl_set_volume(node: &str, vol: f32) {
         .output();
 }
 
+/// Get current volume for a wpctl node (0.0–1.0).
 pub fn wpctl_get_volume(node: &str) -> Option<f32> {
     let output = Command::new("wpctl")
         .args(["get-volume", node])
@@ -236,6 +267,7 @@ pub fn wpctl_get_volume(node: &str) -> Option<f32> {
     None
 }
 
+/// Get the default audio source name via `pactl get-default-source`.
 pub fn pactl_get_default_source() -> Option<String> {
     let output = Command::new("pactl")
         .args(["get-default-source"])
@@ -246,6 +278,7 @@ pub fn pactl_get_default_source() -> Option<String> {
     if name.is_empty() { None } else { Some(name) }
 }
 
+/// Set the default audio source via `pactl set-default-source`.
 pub fn pactl_set_default_source(name: &str) -> Result<()> {
     let output = Command::new("pactl")
         .args(["set-default-source", name])
@@ -261,6 +294,10 @@ pub fn pactl_set_default_source(name: &str) -> Result<()> {
 
 // ── Device discovery ─────────────────────────────────────────────────────────
 
+/// Find all keyboard devices by parsing `/proc/bus/input/devices`.
+///
+/// Skips mice, system buttons, audio devices, and virtual devices.
+/// Returns a list of `(event_path, device_name)` tuples.
 pub fn find_keyboard_devices() -> Vec<(PathBuf, String)> {
     let mut devices = Vec::new();
 

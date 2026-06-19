@@ -1,42 +1,93 @@
-# ptt
+# yaptt
 
-System-wide push-to-talk for Wayland (PipeWire/PulseAudio).
+System-wide push-to-talk for Wayland.
 
-Uses EVIOCGRAB + uinput for keyboard event interception. No external key remapping daemon needed.
+Grabs your microphone at the OS level — hold a key to talk, release to mute. Works in every application (Discord, browser, Telegram, etc.) without per-app configuration.
 
-## Features
+## How it works
 
-- System-wide PTT — works in any application
-- EVIOCGRAB + uinput — grabs physical keyboard, creates virtual keyboard
-- niri keybinds work normally via the virtual keyboard
-- PipeWire/PulseAudio support via `wpctl`
-- Waybar integration with toggle indicator
-- SIGUSR1-based toggle (on/off)
-- Systemd user service
-- Desktop notifications via `notify-send`
+```
+Physical keyboard ──EVIOCGRAB──▸ PTT daemon ──uinput──▸ Your compositor (niri/hypr/…)
+                                       │
+                                       ├─ grave pressed  → wpctl unmute mic
+                                       └─ grave released → fade-out → wpctl mute mic
+```
 
-## Installation
+1. Daemon grabs all physical keyboards via `EVIOCGRAB`
+2. Creates a uinput virtual keyboard and forwards all events
+3. When PTT is **active**: the PTT key (grave) is remapped to F13, mic is muted
+4. **Hold grave** → mic unmutes, F13 is forwarded to apps
+5. **Release grave** → smooth volume fade-out, then mic mutes
+6. SIGUSR1 toggles PTT on/off
 
-### From source (Rust)
+## Install
 
 ```bash
 cargo build --release
 ```
 
-Binaries:
-- `target/release/yaptt-daemon` — main daemon
-- `target/release/yaptt-toggle` — toggle script
-- `target/release/yaptt-indicator` — waybar indicator
+Binaries in `target/release/`:
+| Binary | Purpose |
+|---|---|
+| `yaptt-daemon` | Main daemon |
+| `yaptt-toggle` | Toggle PTT on/off |
+| `yaptt-indicator` | Waybar status widget |
 
-### Requirements
+### System requirements
 
-- User in the `input` group (for `/dev/uinput` access):
-  ```bash
-  sudo usermod -aG input $USER
-  ```
-- No keyd dependency required
+- Linux with PipeWire or PulseAudio
+- User in the `input` group: `sudo usermod -aG input $USER`
+- `wpctl` (PipeWire) or `pactl` (PulseAudio) in PATH
 
-### Systemd service
+## Usage
+
+### Start the daemon
+
+```bash
+yaptt-daemon
+# or with debug logging:
+RUST_LOG=debug yaptt-daemon
+```
+
+### Toggle PTT
+
+```bash
+yaptt-toggle
+# or directly:
+kill -USR1 $(cat /tmp/ptt-daemon.pid)
+```
+
+### States
+
+| State | Mic | Key behavior | Waybar |
+|---|---|---|---|
+| **OFF** | Unmuted | grave works normally | Grey icon |
+| **ON** | Muted | Hold grave to talk | Yellow icon |
+| **TALKING** | Unmuted | F13 forwarded to apps | Green icon |
+
+## Configuration
+
+Edit `~/.config/yaptt/config.json`:
+
+```json
+{
+  "ptt_key": "grave",
+  "remap_key": "f13",
+  "fade_duration_ms": 350
+}
+```
+
+| Key | Default | Description |
+|---|---|---|
+| `ptt_key` | `"grave"` | Key to hold for push-to-talk |
+| `remap_key` | `"f13"` | Virtual key forwarded while holding PTT key |
+| `fade_duration_ms` | `35` | Volume fade-out time in milliseconds |
+
+### Supported key names
+
+Letters: `a`–`z`, Numbers: `0`–`9`, Function: `f1`–`f24`, Modifiers: `leftctrl`, `rightctrl`, `leftshift`, `rightshift`, `leftalt`, `rightalt`, `leftmeta`, `rightmeta`, Special: `grave`, `esc`, `tab`, `capslock`, `space`, `enter`, `backspace`
+
+## Systemd
 
 ```bash
 cp systemd/ptt.service ~/.config/systemd/user/
@@ -44,42 +95,52 @@ systemctl --user daemon-reload
 systemctl --user enable --now ptt
 ```
 
-### Waybar
+Edit the `ExecStart` path in the service file to match your build location.
 
-Copy `waybar/ptt.jsonc` to your waybar modules directory and add `"custom/ptt"` to your
-bar layout. Copy `waybar/ptt.css` imports to your style.
+## Waybar
 
-## Usage
+Add to your waybar config:
 
-### Toggle PTT
+```jsonc
+// In your bar's "modules-left" or "modules-right":
+"custom/ptt"
 
-```bash
-yaptt-toggle
-# or
-kill -USR1 $(cat /tmp/ptt-daemon.pid)
+// Module config (waybar/ptt.jsonc):
+"custom/ptt": {
+    "format": "{}",
+    "exec": "/path/to/yaptt-indicator",
+    "return-type": "json",
+    "on-click": "/path/to/yaptt-toggle",
+    "interval": 1,
+    "tooltip": true
+}
 ```
 
-### State
+Add the CSS from `waybar/ptt.css` to your style:
 
-- **ON**: grave key is remapped to f13 via uinput, mic is muted. Hold Tilde to unmute. Waybar shows green indicator.
-- **OFF**: grave works normally. Mic is unmuted.
+```css
+#custom-ptt { margin: 4px 5px; padding: 6px 15px 6px 10px; border-radius: 20px; }
+#custom-ptt.ptt-off { color: #9399b2; }
+#custom-ptt.ptt-on { color: #f9e2af; }
+#custom-ptt.ptt-talking { color: #a6e3a1; }
+```
 
-## How it works
+## Project structure
 
-1. Daemon grabs all physical keyboards with EVIOCGRAB
-2. Creates a uinput virtual keyboard
-3. Forwards all events from physical → virtual (so niri sees them)
-4. When PTT active: grave → f13 in forwarding, mic is muted
-5. On f13 (grave) press: `wpctl set-mute @DEFAULT_AUDIO_SOURCE@ 0`
-6. On f13 (grave) release: `wpctl set-mute @DEFAULT_AUDIO_SOURCE@ 1`
-7. SIGUSR1 toggles between active/paused states
-8. When paused, grave forwards as-is (no remap)
-
-## Binary sizes
-
-- `yaptt-daemon`: ~2.5MB
-- `yaptt-toggle`: ~500KB
-- `yaptt-indicator`: ~500KB
+```
+daemon/
+  src/
+    lib.rs             — Config, state, key mapping, wpctl helpers, device discovery
+    main.rs            — Daemon: EVIOCGRAB, uinput, fade loop, signal handling
+    bin/
+      ptt-toggle.rs    — SIGUSR1 toggle with desktop notification
+      ptt-indicator.rs — Waybar JSON output (OFF/ON/TALKING)
+  tests/               — 78 tests covering config, keys, state, devices, events
+systemd/
+  ptt.service          — Systemd user service
+waybar/
+  ptt.jsonc            — Waybar module config
+```
 
 ## License
 
