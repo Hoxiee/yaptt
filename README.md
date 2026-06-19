@@ -9,16 +9,23 @@ Grabs your microphone at the OS level — hold a key to talk, release to mute. W
 ```
 Physical keyboard ──EVIOCGRAB──▸ PTT daemon ──uinput──▸ Your compositor (niri/hypr/…)
                                        │
-                                       ├─ grave pressed  → wpctl unmute mic
-                                       └─ grave released → fade-out → wpctl mute mic
+                                       ├─ grave pressed  → reads volume, unmutes mic
+                                       └─ grave released → fade-out → mutes mic, restores volume
 ```
 
 1. Daemon grabs all physical keyboards via `EVIOCGRAB`
 2. Creates a uinput virtual keyboard and forwards all events
 3. When PTT is **active**: the PTT key (grave) is remapped to F13, mic is muted
-4. **Hold grave** → mic unmutes, F13 is forwarded to apps
-5. **Release grave** → smooth volume fade-out, then mic mutes
-6. SIGUSR1 toggles PTT on/off
+4. **Hold grave** → reads current user volume, unmutes mic, F13 forwarded to apps
+5. **Release grave** → smooth volume fade-out, mic mutes, volume restored
+6. SIGUSR1 toggles PTT on/off (mute/unmute only, never touches volume)
+
+### Volume behavior
+
+- PTT toggle (SIGUSR1) only mutes/unmutes — volume slider stays where the user put it
+- Each grave press reads the **current** volume from wpctl, so user can adjust freely between presses
+- During fade-out, volume is locked to the level from the last press
+- After fade completes, volume is restored to that level
 
 ## Install
 
@@ -64,6 +71,10 @@ kill -USR1 $(cat /tmp/ptt-daemon.pid)
 | **OFF** | Unmuted | grave works normally | Grey icon |
 | **ON** | Muted | Hold grave to talk | Yellow icon |
 | **TALKING** | Unmuted | F13 forwarded to apps | Green icon |
+
+### User volume control
+
+You can adjust microphone volume at any time via pavucontrol, wpctl, or your compositor's volume controls. The daemon never overwrites your volume setting except during the brief fade-out (which restores it immediately after).
 
 ## Configuration
 
