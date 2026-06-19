@@ -1,7 +1,26 @@
-# Tauri + Vue + TypeScript
+# PTT GUI
 
-This template should help get you started developing with Vue 3 and TypeScript in Vite. The template uses Vue 3 `<script setup>` SFCs, check out the [script setup docs](https://v3.vuejs.org/api/sfc-script-setup.html#sfc-script-setup) to learn more.
+Tauri + Vue desktop app for configuring the PTT daemon.
 
-## Recommended IDE Setup
+## Build
 
-- [VS Code](https://code.visualstudio.com/) + [Vue - Official](https://marketplace.visualstudio.com/items?itemName=Vue.volar) + [Tauri](https://marketplace.visualstudio.com/items?itemName=tauri-apps.tauri-vscode) + [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer)
+```bash
+# From the gui/ directory:
+npm install
+npm run tauri build
+```
+
+Requires Rust, Node.js, and Tauri system dependencies (webkit2gtk, etc.).
+
+## Features
+
+- Toggle PTT on/off
+- Configure PTT key and remap key
+- View daemon status and PID
+- Apply config changes (requires daemon restart)
+
+## Development
+
+```bash
+npm run tauri dev
+```

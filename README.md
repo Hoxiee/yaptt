@@ -29,22 +29,39 @@ Physical keyboard ──EVIOCGRAB──▸ PTT daemon ──uinput──▸ Your
 
 ## Install
 
+### System requirements
+
+- Linux with PipeWire or PulseAudio
+- User in the `input` group: `sudo usermod -aG input $USER`
+- `wpctl` (PipeWire) or `pactl` (PulseAudio) in PATH
+
+### Build from source
+
 ```bash
 cargo build --release
 ```
 
-Binaries in `target/release/`:
+Install binaries to `~/.local/bin/`:
+
+```bash
+mkdir -p ~/.local/bin
+cp target/release/yaptt-daemon target/release/yaptt-toggle target/release/yaptt-indicator ~/.local/bin/
+```
+
 | Binary | Purpose |
 |---|---|
 | `yaptt-daemon` | Main daemon |
 | `yaptt-toggle` | Toggle PTT on/off |
 | `yaptt-indicator` | Waybar status widget |
 
-### System requirements
+### Systemd service
 
-- Linux with PipeWire or PulseAudio
-- User in the `input` group: `sudo usermod -aG input $USER`
-- `wpctl` (PipeWire) or `pactl` (PulseAudio) in PATH
+```bash
+mkdir -p ~/.config/systemd/user
+cp systemd/ptt.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now ptt
+```
 
 ## Usage
 
@@ -98,16 +115,6 @@ Edit `~/.config/yaptt/config.json`:
 
 Letters: `a`–`z`, Numbers: `0`–`9`, Function: `f1`–`f24`, Modifiers: `leftctrl`, `rightctrl`, `leftshift`, `rightshift`, `leftalt`, `rightalt`, `leftmeta`, `rightmeta`, Special: `grave`, `esc`, `tab`, `capslock`, `space`, `enter`, `backspace`
 
-## Systemd
-
-```bash
-cp systemd/ptt.service ~/.config/systemd/user/
-systemctl --user daemon-reload
-systemctl --user enable --now ptt
-```
-
-Edit the `ExecStart` path in the service file to match your build location.
-
 ## Waybar
 
 Add to your waybar config:
@@ -115,25 +122,21 @@ Add to your waybar config:
 ```jsonc
 // In your bar's "modules-left" or "modules-right":
 "custom/ptt"
-
-// Module config (waybar/ptt.jsonc):
-"custom/ptt": {
-    "format": "{}",
-    "exec": "/path/to/yaptt-indicator",
-    "return-type": "json",
-    "on-click": "/path/to/yaptt-toggle",
-    "interval": 1,
-    "tooltip": true
-}
 ```
 
-Add the CSS from `waybar/ptt.css` to your style:
+Copy the module config and CSS:
 
-```css
-#custom-ptt { margin: 4px 5px; padding: 6px 15px 6px 10px; border-radius: 20px; }
-#custom-ptt.ptt-off { color: #9399b2; }
-#custom-ptt.ptt-on { color: #f9e2af; }
-#custom-ptt.ptt-talking { color: #a6e3a1; }
+```bash
+cp waybar/ptt.jsonc ~/.config/waybar/
+# Add CSS from waybar/ptt.css to your waybar style
+```
+
+## GUI
+
+Desktop configuration app built with Tauri + Vue. See [gui/README.md](gui/README.md).
+
+```bash
+cd gui && npm install && npm run tauri build
 ```
 
 ## Project structure
@@ -147,10 +150,14 @@ daemon/
       ptt-toggle.rs    — SIGUSR1 toggle with desktop notification
       ptt-indicator.rs — Waybar JSON output (OFF/ON/TALKING)
   tests/               — 78 tests covering config, keys, state, devices, events
+gui/
+  src-tauri/           — Tauri backend (Rust)
+  src/                 — Vue frontend
 systemd/
   ptt.service          — Systemd user service
 waybar/
   ptt.jsonc            — Waybar module config
+  ptt.css              — Waybar styling (tokens/)
 ```
 
 ## License
