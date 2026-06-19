@@ -1,6 +1,6 @@
 # Maintainer: Hoxiee
 pkgname=yaptt-bin
-pkgver=0.2.0
+pkgver=0.2.1
 pkgrel=1
 pkgdesc="System-wide push-to-talk for Wayland"
 arch=('x86_64')
