@@ -1,146 +1,137 @@
-use libspa_sys as spa_sys;
+use anyhow::Context;
 use pipewire as pw;
+use pipewire::properties::properties;
 use pipewire::spa;
-use std::cell::{Cell, RefCell};
-use std::mem::MaybeUninit;
-use std::rc::Rc;
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::Arc;
+use std::thread;
+use std::time::Duration;
 
-pub fn pw_init_once() {
-    pw::init();
+pub struct PttState {
+    pub gain: AtomicU32,
+    pub active: AtomicBool,
+    pub muted: AtomicBool,
 }
 
-pub fn set_source_soft_volume(volume: f32) -> bool {
-    pw_init_once();
-
-    let mainloop = pw::main_loop::MainLoopRc::new(None).unwrap();
-    let context = pw::context::ContextRc::new(&mainloop, None).unwrap();
-    let core = context.connect_rc(None).unwrap();
-
-    // Get default source ID
-    let target_id = get_default_source_id();
-    if target_id == 0 {
-        tracing::warn!("No default source");
-        return false;
-    }
-
-    // Phase 1: enumerate all globals, collect stream IDs
-    let stream_ids: Rc<RefCell<Vec<u32>>> = Rc::new(RefCell::new(Vec::new()));
-    let sids = stream_ids.clone();
-
-    {
-        let registry = core.get_registry().unwrap();
-        let _reg = registry.add_listener_local()
-            .global(move |global| {
-                let mc = global.props
-                    .and_then(|p| p.get("media.class"))
-                    .unwrap_or("");
-                if mc.contains("Stream") || mc.contains("Input") {
-                    sids.borrow_mut().push(global.id);
-                }
-            })
-            .register();
-        do_roundtrip(&mainloop, &core);
-    }
-
-    let ids = stream_ids.borrow().clone();
-    if ids.is_empty() {
-        tracing::warn!("No streams found");
-        return false;
-    }
-
-    tracing::info!("Found {} streams, setting volume {:.0}%", ids.len(), volume * 100.0);
-
-    // Phase 2: for each stream, enumerate again and bind+set_param
-    let count = Rc::new(Cell::new(0u32));
-
-    for &tid in &ids {
-        let target_id = tid;
-        let cnt = count.clone();
-        let ml = mainloop.clone();
-        let found = Rc::new(Cell::new(false));
-        let fc = found.clone();
-
-        {
-            let registry = core.get_registry().unwrap();
-            let _reg = registry.add_listener_local()
-                .global(move |global| {
-                    if global.id != target_id || fc.get() { return; }
-                    match registry.bind(global) {
-                        Ok(node) => {
-                            let node: pw::node::Node = node;
-                            let mut data = Vec::with_capacity(256);
-                            let mut builder = spa::pod::builder::Builder::new(&mut data);
-
-                            unsafe {
-                                let mut frame = MaybeUninit::<spa_sys::spa_pod_frame>::uninit();
-                                builder.push_object(&mut frame, spa_sys::SPA_PARAM_Props, 0).unwrap();
-                                builder.add_prop(spa_sys::SPA_PROP_volume, 0).unwrap();
-                                builder.add_float(volume).unwrap();
-                                builder.pop(&mut frame.assume_init_mut());
-
-                                let pod_ptr = &frame.assume_init().pod as *const spa_sys::spa_pod;
-                                let pod = spa::pod::Pod::from_raw(pod_ptr);
-                                node.set_param(spa::param::ParamType::Props, 0, pod);
-                            }
-
-                            fc.set(true);
-                            cnt.set(cnt.get() + 1);
-                            tracing::info!("Set volume on stream {}", target_id);
-                        }
-                        Err(e) => {
-                            tracing::warn!("Bind failed for stream {}: {}", target_id, e);
-                        }
-                    }
-                    ml.quit();
-                })
-                .register();
-
-            do_roundtrip(&mainloop, &core);
+impl PttState {
+    pub fn new() -> Self {
+        Self {
+            gain: AtomicU32::new(1.0f32.to_bits()),
+            active: AtomicBool::new(false),
+            muted: AtomicBool::new(true),
         }
     }
-
-    let c = count.get();
-    if c > 0 {
-        tracing::info!("Volume set on {} streams: {:.0}%", c, volume * 100.0);
-    } else {
-        tracing::warn!("Failed to set volume on any stream");
-    }
-
-    true
 }
 
-fn do_roundtrip(mainloop: &pw::main_loop::MainLoopRc, core: &pw::core::CoreRc) {
-    let done = Rc::new(Cell::new(false));
-    let dc = done.clone();
-    let ml = mainloop.clone();
-    let pending = core.sync(0).expect("sync failed");
+pub fn atomic_load_f32(a: &AtomicU32) -> f32 {
+    f32::from_bits(a.load(Ordering::Relaxed))
+}
 
-    let _l = core.add_listener_local()
-        .done(move |id, seq| {
-            if id == pw::core::PW_ID_CORE && seq == pending {
-                dc.set(true);
-                ml.quit();
+pub fn atomic_store_f32(a: &AtomicU32, v: f32) {
+    a.store(v.to_bits(), Ordering::Relaxed);
+}
+
+pub fn start_fade_thread(state: Arc<PttState>, fade_duration_ms: u64) {
+    thread::spawn(move || {
+        let tick = Duration::from_millis(10);
+        let step = 10.0 / fade_duration_ms as f32;
+
+        loop {
+            thread::sleep(tick);
+            let target = if state.active.load(Ordering::Relaxed) {
+                1.0f32
+            } else {
+                0.0f32
+            };
+            let cur = atomic_load_f32(&state.gain);
+            if (cur - target).abs() < 0.005 {
+                atomic_store_f32(&state.gain, target);
+                state.muted.store(target == 0.0, Ordering::Relaxed);
+                continue;
+            }
+            if target > cur {
+                state.muted.store(false, Ordering::Relaxed);
+                atomic_store_f32(&state.gain, (cur + step).min(1.0));
+            } else {
+                atomic_store_f32(&state.gain, (cur - step).max(0.0));
+            }
+        }
+    });
+}
+
+pub fn create_ptt_stream(state: Arc<PttState>) -> anyhow::Result<()> {
+    pw::init();
+
+    let mainloop = pw::main_loop::MainLoopRc::new(None)
+        .context("Failed to create PipeWire main loop")?;
+    let context = pw::context::ContextRc::new(&mainloop, None)
+        .context("Failed to create PipeWire context")?;
+    let core = context.connect_rc(None)
+        .context("Failed to connect to PipeWire")?;
+
+    let stream = pw::stream::StreamRc::new(
+        core.clone(),
+        "ptt-volume-filter",
+        properties! {
+            *pw::keys::MEDIA_TYPE => "Audio",
+            *pw::keys::MEDIA_CATEGORY => "Source",
+            *pw::keys::MEDIA_ROLE => "Communication",
+            *pw::keys::NODE_NAME => "PTT Volume Filter",
+            *pw::keys::NODE_DESCRIPTION => "PTT Push-to-Talk Volume Control",
+        },
+    )
+    .context("Failed to create stream")?;
+
+    stream
+        .connect(
+            spa::utils::Direction::Input,
+            None,
+            pw::stream::StreamFlags::AUTOCONNECT
+                | pw::stream::StreamFlags::MAP_BUFFERS
+                | pw::stream::StreamFlags::RT_PROCESS,
+            &mut [],
+        )
+        .context("Failed to connect stream")?;
+
+    let _listener = stream
+        .add_local_listener_with_user_data(UserData { state })
+        .process(|_stream, data| {
+            let Some(mut buf) = _stream.dequeue_buffer() else {
+                return;
+            };
+            let datas = buf.datas_mut();
+            let Some(d) = datas.get_mut(0) else {
+                return;
+            };
+
+            let gain = atomic_load_f32(&data.state.gain);
+
+            let Some(data_slice) = d.data() else {
+                return;
+            };
+            let byte_len = data_slice.len();
+            let ptr = data_slice.as_mut_ptr() as *mut f32;
+
+            if data.state.muted.load(Ordering::Relaxed) {
+                unsafe {
+                    std::ptr::write_bytes(ptr, 0, byte_len);
+                }
+                return;
+            }
+
+            let samples = unsafe { std::slice::from_raw_parts_mut(ptr, byte_len / 4) };
+            for s in samples.iter_mut() {
+                *s *= gain;
             }
         })
-        .register();
+        .register()
+        .context("Failed to register stream listener")?;
 
-    while !done.get() {
-        mainloop.run();
-    }
+    mainloop.run();
+
+    Ok(())
 }
 
-fn get_default_source_id() -> u32 {
-    let output = std::process::Command::new("wpctl")
-        .args(["inspect", "@DEFAULT_AUDIO_SOURCE@"])
-        .output().ok()
-        .and_then(|o| String::from_utf8(o.stdout).ok())
-        .unwrap_or_default();
-
-    for line in output.lines() {
-        let trimmed = line.trim();
-        if let Some(val) = trimmed.strip_prefix("node.id") {
-            if let Ok(id) = val.trim().parse::<u32>() { return id; }
-        }
-    }
-    0
+struct UserData {
+    state: Arc<PttState>,
 }

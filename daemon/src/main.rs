@@ -3,10 +3,9 @@ use evdev::Device;
 use input_linux::{EventKind, InputId, UInputHandle};
 use std::fs::File;
 use std::io::Write;
-use std::os::unix::io::AsRawFd;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use tokio::signal;
 use tokio::sync::mpsc;
 use tracing::{info, warn};
@@ -28,7 +27,7 @@ impl PttDaemon {
         for (path, name) in &devices {
             info!("Found keyboard: {} ({})", name, path.display());
         }
-        let active = Arc::new(AtomicBool::new(true));
+        let active = Arc::new(AtomicBool::new(false));
         Ok(Self {
             devices,
             config,
@@ -40,24 +39,17 @@ impl PttDaemon {
         let ptt_key_code = self.config.ptt_key_code().context("Invalid PTT key")?;
         let remap_key_code = self.config.remap_key_code().context("Invalid remap key")?;
         let active = self.active.clone();
-        let fade_cancel = Arc::new(AtomicBool::new(false));
         let fade_duration = self.config.fade_duration_ms;
 
-        let loopback = match PipeWireLoopback::start("ptt-loopback") {
-            Ok(lb) => {
-                info!("PipeWire loopback created, node_id={}", lb.node_id);
-                Some(Arc::new(Mutex::new(lb)))
-            }
-            Err(e) => {
-                warn!("Failed to create PipeWire loopback: {}. Falling back to direct mute.", e);
-                None
-            }
-        };
+        let ptt_state = Arc::new(pw_volume::PttState::new());
+        pw_volume::start_fade_thread(ptt_state.clone(), fade_duration);
 
-        let loopback_node: Option<String> = loopback.as_ref().map(|lb| {
-            lb.lock().unwrap().node_id.to_string()
+        let ptt_state_clone = ptt_state.clone();
+        std::thread::spawn(move || {
+            if let Err(e) = pw_volume::create_ptt_stream(ptt_state_clone) {
+                warn!("Failed to create PipeWire PTT stream: {}. Falling back to mute-only", e);
+            }
         });
-        let audio_target = loopback_node.as_deref().unwrap_or("@DEFAULT_AUDIO_SOURCE@");
 
         let (tx, mut rx) = mpsc::unbounded_channel();
 
@@ -146,8 +138,7 @@ impl PttDaemon {
 
         {
             let active = self.active.clone();
-            let fade_cancel = fade_cancel.clone();
-            let loopback = loopback.clone();
+            let ptt_state = ptt_state.clone();
             tokio::spawn(async move {
                 let mut sigterm =
                     signal::unix::signal(signal::unix::SignalKind::terminate()).unwrap();
@@ -157,22 +148,11 @@ impl PttDaemon {
                     _ = sigterm.recv() => {},
                     _ = sigint.recv() => {},
                 }
-                fade_cancel.store(true, Ordering::Relaxed);
-                if let Some(ref lb) = loopback {
-                    let lb = lb.lock().unwrap();
-                    wpctl_mute(&lb.node_id.to_string(), false);
-                    drop(lb);
-                } else {
-                    wpctl_mute_default(false);
-                }
+                ptt_state.active.store(false, Ordering::Relaxed);
                 if active.load(Ordering::Relaxed) {
                     write_state(false);
                 }
                 clear_talking();
-                if let Some(lb) = loopback {
-                    let mut lb = lb.lock().unwrap();
-                    lb.stop();
-                }
                 remove_pid();
                 std::process::exit(0);
             });
@@ -182,29 +162,23 @@ impl PttDaemon {
             tokio::select! {
                 Some(value) = rx.recv() => {
                     if value == 1 {
-                        fade_cancel.store(true, Ordering::Relaxed);
-                        wpctl_set_volume(audio_target, 1.0);
-                        wpctl_mute(audio_target, false);
+                        ptt_state.active.store(true, Ordering::Relaxed);
+                        wpctl_mute_default(false);
                     } else if value == 0 {
-                        fade_cancel.store(true, Ordering::Relaxed);
-                        std::thread::sleep(std::time::Duration::from_millis(5));
-                        fade_cancel.store(false, Ordering::Relaxed);
-                        let cancel = fade_cancel.clone();
-                        std::thread::spawn(move || {
-                            fade_out_soft(fade_duration, cancel);
-                        });
+                        ptt_state.active.store(false, Ordering::Relaxed);
                     }
                 }
                 _ = sig_rx.recv() => {
-                    fade_cancel.store(true, Ordering::Relaxed);
                     if active.load(Ordering::Relaxed) {
-                        wpctl_mute(audio_target, false);
+                        ptt_state.active.store(false, Ordering::Relaxed);
+                        wpctl_mute_default(true);
                         write_state(false);
                         clear_talking();
                         active.store(false, Ordering::Relaxed);
                         info!("PTT paused");
                     } else {
-                        wpctl_mute(audio_target, true);
+                        ptt_state.active.store(true, Ordering::Relaxed);
+                        wpctl_mute_default(false);
                         write_state(true);
                         active.store(true, Ordering::Relaxed);
                         info!("PTT active");
@@ -269,7 +243,7 @@ async fn main() -> Result<()> {
     write_pid()?;
     write_state(false);
     clear_talking();
-    info!("PTT daemon started (uinput + pw-loopback mode)");
+    info!("PTT daemon started (PCM multiplication mode)");
 
     let _ = std::process::Command::new("notify-send")
         .args(["-a", "ptt", "-i", "microphone-sensitivity-high", "-t", "3000",
