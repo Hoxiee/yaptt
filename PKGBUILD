@@ -6,22 +6,22 @@ pkgdesc="System-wide push-to-talk for Wayland"
 arch=('x86_64')
 url="https://github.com/Hoxiee/yaptt"
 license=('MIT')
-depends=('evdev' 'libinput' 'pipewire' 'lib32-glibc')
-makedepends=('cargo')
-source=("$url/releases/download/v$pkgver/artifacts.tar.gz")
-sha256sums=('SKIP')
+depends=('libevdev' 'libinput' 'pipewire' 'lib32-glibc')
+source=("$url/releases/download/v$pkgver/artifacts.tar.gz"
+        "systemd/ptt.service")
+sha256sums=('SKIP'
+            'SKIP')
 
 package() {
     install -Dm755 "$srcdir/yaptt-daemon" "$pkgdir/usr/bin/yaptt-daemon"
     install -Dm755 "$srcdir/yaptt-toggle" "$pkgdir/usr/bin/yaptt-toggle"
     install -Dm755 "$srcdir/yaptt-indicator" "$pkgdir/usr/bin/yaptt-indicator"
-    install -Dm644 "$srcdir/../../systemd/ptt.service" "$pkgdir/usr/lib/systemd/user/ptt.service"
+    install -Dm644 "$srcdir/systemd/ptt.service" "$pkgdir/usr/lib/systemd/user/ptt.service"
 }
 
 check() {
     cd "$srcdir"
-    echo "Binaries:"
-    ./yaptt-daemon --version 2>/dev/null || true
-    ./yaptt-toggle --version 2>/dev/null || true
-    ./yaptt-indicator --version 2>/dev/null || true
+    ./yaptt-daemon --version
+    ./yaptt-toggle --version
+    ./yaptt-indicator --version
 }
