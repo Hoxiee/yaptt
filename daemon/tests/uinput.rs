@@ -1,6 +1,13 @@
 use std::fs::File;
 use input_linux::{EventKind, InputId, UInputHandle};
 
+fn skip_if_no_uinput() {
+    if File::options().read(true).write(true).open("/dev/uinput").is_err() {
+        eprintln!("Skipping: /dev/uinput not accessible (need input group or root)");
+        std::process::exit(0);
+    }
+}
+
 fn create_test_uinput(name: &str) -> Result<File, Box<dyn std::error::Error>> {
     let uinput_file = File::options()
         .read(true)
@@ -31,12 +38,14 @@ fn create_test_uinput(name: &str) -> Result<File, Box<dyn std::error::Error>> {
 
 #[test]
 fn uinput_keyboard_creation() {
+    skip_if_no_uinput();
     let result = create_test_uinput("test-ptt-keyboard");
     assert!(result.is_ok(), "Failed to create uinput device: {:?}", result.err());
 }
 
 #[test]
 fn uinput_keyboard_can_write_event() {
+    skip_if_no_uinput();
     let file = create_test_uinput("test-ptt-write").unwrap();
     let handle = UInputHandle::new(file);
 
@@ -53,6 +62,7 @@ fn uinput_keyboard_can_write_event() {
 
 #[test]
 fn uinput_keyboard_fd_clone() {
+    skip_if_no_uinput();
     let file = create_test_uinput("test-ptt-clone").unwrap();
     let file2 = file.try_clone().unwrap();
 
@@ -73,6 +83,7 @@ fn uinput_keyboard_fd_clone() {
 
 #[test]
 fn uinput_syn_report_only() {
+    skip_if_no_uinput();
     let file = create_test_uinput("test-ptt-syn").unwrap();
     let handle = UInputHandle::new(file);
 
