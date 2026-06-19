@@ -1,18 +1,20 @@
-use std::fs::File;
 use input_linux::{EventKind, InputId, UInputHandle};
+use std::fs::File;
 
 fn skip_if_no_uinput() {
-    if File::options().read(true).write(true).open("/dev/uinput").is_err() {
+    if File::options()
+        .read(true)
+        .write(true)
+        .open("/dev/uinput")
+        .is_err()
+    {
         eprintln!("Skipping: /dev/uinput not accessible (need input group or root)");
         std::process::exit(0);
     }
 }
 
 fn create_test_uinput(name: &str) -> Result<File, Box<dyn std::error::Error>> {
-    let uinput_file = File::options()
-        .read(true)
-        .write(true)
-        .open("/dev/uinput")?;
+    let uinput_file = File::options().read(true).write(true).open("/dev/uinput")?;
 
     let handle = UInputHandle::new(uinput_file.try_clone()?);
 
@@ -40,7 +42,11 @@ fn create_test_uinput(name: &str) -> Result<File, Box<dyn std::error::Error>> {
 fn uinput_keyboard_creation() {
     skip_if_no_uinput();
     let result = create_test_uinput("test-ptt-keyboard");
-    assert!(result.is_ok(), "Failed to create uinput device: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Failed to create uinput device: {:?}",
+        result.err()
+    );
 }
 
 #[test]
@@ -104,5 +110,9 @@ fn uinput_syn_report_only() {
     let raw_syn: input_linux::sys::input_event = unsafe { std::mem::transmute(syn_ev) };
 
     let result = handle.write(&[raw_key, raw_syn]);
-    assert!(result.is_ok(), "Failed to write key+syn: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Failed to write key+syn: {:?}",
+        result.err()
+    );
 }

@@ -42,11 +42,7 @@ fn find_keyboard_devices_only_kbd_not_mouse() {
     let devices = find_keyboard_devices();
 
     for (path, _name) in &devices {
-        let event_name = path
-            .file_name()
-            .unwrap()
-            .to_string_lossy()
-            .to_string();
+        let event_name = path.file_name().unwrap().to_string_lossy().to_string();
 
         let mut blocks: Vec<(String, String)> = Vec::new();
         let mut cur_name = String::new();
@@ -75,7 +71,11 @@ fn find_keyboard_devices_only_kbd_not_mouse() {
             .filter(|(_, h)| h.split_whitespace().any(|x| x == event_name.as_str()))
             .collect();
 
-        assert!(!matching.is_empty(), "event{} not found in /proc", &event_name[5..]);
+        assert!(
+            !matching.is_empty(),
+            "event{} not found in /proc",
+            &event_name[5..]
+        );
 
         for (_name, handlers) in &matching {
             assert!(

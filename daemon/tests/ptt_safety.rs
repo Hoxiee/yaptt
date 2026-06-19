@@ -4,11 +4,31 @@ use yaptt_daemon::*;
 fn ptt_key_only_triggers_when_active() {
     let ptt_key = evdev::Key::KEY_GRAVE;
 
-    assert_eq!(handle_key_event(41, 1, ptt_key), Some(true), "grave press should trigger");
-    assert_eq!(handle_key_event(41, 0, ptt_key), Some(false), "grave release should trigger");
-    assert_eq!(handle_key_event(41, 2, ptt_key), None, "grave repeat should not trigger");
-    assert_eq!(handle_key_event(30, 1, ptt_key), None, "other key should not trigger");
-    assert_eq!(handle_key_event(30, 0, ptt_key), None, "other key release should not trigger");
+    assert_eq!(
+        handle_key_event(41, 1, ptt_key),
+        Some(true),
+        "grave press should trigger"
+    );
+    assert_eq!(
+        handle_key_event(41, 0, ptt_key),
+        Some(false),
+        "grave release should trigger"
+    );
+    assert_eq!(
+        handle_key_event(41, 2, ptt_key),
+        None,
+        "grave repeat should not trigger"
+    );
+    assert_eq!(
+        handle_key_event(30, 1, ptt_key),
+        None,
+        "other key should not trigger"
+    );
+    assert_eq!(
+        handle_key_event(30, 0, ptt_key),
+        None,
+        "other key release should not trigger"
+    );
 }
 
 #[test]

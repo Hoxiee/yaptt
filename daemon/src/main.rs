@@ -57,7 +57,9 @@ impl PttDaemon {
             let name = name.clone();
             let tx = tx.clone();
             let active = active.clone();
-            let vk_file = uinput_file.try_clone().context("Failed to clone uinput fd")?;
+            let vk_file = uinput_file
+                .try_clone()
+                .context("Failed to clone uinput fd")?;
 
             std::thread::spawn(move || {
                 let mut device = match Device::open(&path) {
@@ -245,7 +247,11 @@ fn create_uinput_keyboard(name: &str) -> Result<File> {
         .open("/dev/uinput")
         .context("Failed to open /dev/uinput. Add your user to the 'input' group.")?;
 
-    let handle = UInputHandle::new(uinput_file.try_clone().context("Failed to clone uinput fd")?);
+    let handle = UInputHandle::new(
+        uinput_file
+            .try_clone()
+            .context("Failed to clone uinput fd")?,
+    );
 
     handle
         .set_evbit(EventKind::Key)
@@ -295,8 +301,16 @@ async fn main() -> Result<()> {
     info!("PTT daemon started");
 
     let _ = std::process::Command::new("notify-send")
-        .args(["-a", "ptt", "-i", "microphone-sensitivity-high", "-t", "3000",
-               "yaptt-daemon", "PTT daemon started. Click waybar icon to enable."])
+        .args([
+            "-a",
+            "ptt",
+            "-i",
+            "microphone-sensitivity-high",
+            "-t",
+            "3000",
+            "yaptt-daemon",
+            "PTT daemon started. Click waybar icon to enable.",
+        ])
         .output();
 
     daemon.run().await

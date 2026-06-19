@@ -1,6 +1,6 @@
-use yaptt_daemon::{read_pid_at, read_state_at, remove_file_if_exists, write_state_at};
 use std::fs;
 use tempfile::TempDir;
+use yaptt_daemon::{read_pid_at, read_state_at, remove_file_if_exists, write_state_at};
 
 #[allow(dead_code)]
 struct LifecycleTest {

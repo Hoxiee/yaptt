@@ -1,6 +1,6 @@
-use yaptt_daemon::{read_pid_at, remove_file_if_exists};
 use std::fs;
 use tempfile::TempDir;
+use yaptt_daemon::{read_pid_at, remove_file_if_exists};
 
 #[allow(dead_code)]
 struct PidTest {

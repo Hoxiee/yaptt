@@ -1,6 +1,6 @@
-use yaptt_daemon::{read_state_at, write_state_at};
 use std::fs;
 use tempfile::TempDir;
+use yaptt_daemon::{read_state_at, write_state_at};
 
 #[allow(dead_code)]
 struct StateTest {

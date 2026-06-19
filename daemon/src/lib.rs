@@ -53,20 +53,61 @@ fn key_name_map() -> HashMap<String, u16> {
     m.insert("enter".into(), 28);
     m.insert("backspace".into(), 14);
     let f_keys = [
-        (1, 59), (2, 60), (3, 61), (4, 62), (5, 63), (6, 64),
-        (7, 65), (8, 66), (9, 67), (10, 68), (11, 87), (12, 88),
-        (13, 183), (14, 184), (15, 185), (16, 186), (17, 187), (18, 188),
-        (19, 189), (20, 190), (21, 191), (22, 192), (23, 193), (24, 194),
+        (1, 59),
+        (2, 60),
+        (3, 61),
+        (4, 62),
+        (5, 63),
+        (6, 64),
+        (7, 65),
+        (8, 66),
+        (9, 67),
+        (10, 68),
+        (11, 87),
+        (12, 88),
+        (13, 183),
+        (14, 184),
+        (15, 185),
+        (16, 186),
+        (17, 187),
+        (18, 188),
+        (19, 189),
+        (20, 190),
+        (21, 191),
+        (22, 192),
+        (23, 193),
+        (24, 194),
     ];
     for (num, code) in f_keys {
         m.insert(format!("f{num}"), code);
     }
     let letters = [
-        ('a', 30), ('b', 48), ('c', 46), ('d', 32), ('e', 18), ('f', 33),
-        ('g', 34), ('h', 35), ('i', 23), ('j', 36), ('k', 37), ('l', 38),
-        ('m', 50), ('n', 49), ('o', 24), ('p', 25), ('q', 16), ('r', 19),
-        ('s', 31), ('t', 20), ('u', 22), ('v', 47), ('w', 17), ('x', 45),
-        ('y', 21), ('z', 44),
+        ('a', 30),
+        ('b', 48),
+        ('c', 46),
+        ('d', 32),
+        ('e', 18),
+        ('f', 33),
+        ('g', 34),
+        ('h', 35),
+        ('i', 23),
+        ('j', 36),
+        ('k', 37),
+        ('l', 38),
+        ('m', 50),
+        ('n', 49),
+        ('o', 24),
+        ('p', 25),
+        ('q', 16),
+        ('r', 19),
+        ('s', 31),
+        ('t', 20),
+        ('u', 22),
+        ('v', 47),
+        ('w', 17),
+        ('x', 45),
+        ('y', 21),
+        ('z', 44),
     ];
     for (c, code) in letters {
         m.insert(c.to_string(), code);
@@ -275,7 +316,11 @@ pub fn pactl_get_default_source() -> Option<String> {
         .ok()?;
     let stdout = String::from_utf8_lossy(&output.stdout);
     let name = stdout.trim().to_string();
-    if name.is_empty() { None } else { Some(name) }
+    if name.is_empty() {
+        None
+    } else {
+        Some(name)
+    }
 }
 
 /// Set the default audio source via `pactl set-default-source`.
@@ -318,9 +363,16 @@ pub fn find_keyboard_devices() -> Vec<(PathBuf, String)> {
                     .unwrap_or_default();
             } else if line.starts_with('I') && !line.contains("ID_") {
                 let skip_names = [
-                    "power button", "video bus", "pc speaker",
-                    "hda nvidia", "hd-audio", "vicinae", "keyd virtual",
-                    "system control", "consumer control", "audio",
+                    "power button",
+                    "video bus",
+                    "pc speaker",
+                    "hda nvidia",
+                    "hd-audio",
+                    "vicinae",
+                    "keyd virtual",
+                    "system control",
+                    "consumer control",
+                    "audio",
                 ];
                 let lower = current_name.to_lowercase();
 
@@ -328,7 +380,10 @@ pub fn find_keyboard_devices() -> Vec<(PathBuf, String)> {
                     && !current_handlers.contains("mouse")
                     && !skip_names.iter().any(|skip| lower.contains(skip))
                 {
-                    if let Some(event_name) = current_handlers.split_whitespace().find(|h| h.starts_with("event")) {
+                    if let Some(event_name) = current_handlers
+                        .split_whitespace()
+                        .find(|h| h.starts_with("event"))
+                    {
                         let path = PathBuf::from("/dev/input").join(event_name);
                         if path.exists() {
                             devices.push((path, current_name.clone()));

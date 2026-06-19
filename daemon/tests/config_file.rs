@@ -1,5 +1,5 @@
-use yaptt_daemon::{load_config_at, save_config_at, PttConfig};
 use tempfile::TempDir;
+use yaptt_daemon::{load_config_at, save_config_at, PttConfig};
 
 struct ConfigTest {
     _dir: TempDir,
