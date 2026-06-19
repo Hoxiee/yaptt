@@ -3,14 +3,14 @@ use evdev::Device;
 use input_linux::{EventKind, InputId, UInputHandle};
 use std::fs::File;
 use std::io::Write;
-use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::thread;
+use std::time::Duration;
 use tokio::signal;
 use tokio::sync::mpsc;
 use tracing::{info, warn};
 use yaptt_daemon::*;
-use yaptt_daemon::pw_volume;
 
 struct PttDaemon {
     devices: Vec<(std::path::PathBuf, String)>,
@@ -41,15 +41,12 @@ impl PttDaemon {
         let active = self.active.clone();
         let fade_duration = self.config.fade_duration_ms;
 
-        let ptt_state = Arc::new(pw_volume::PttState::new());
-        pw_volume::start_fade_thread(ptt_state.clone(), fade_duration);
+        let original_source_name = pactl_get_default_source()
+            .context("No default audio source found. Is PipeWire running?")?;
+        info!("Original default source: {}", original_source_name);
 
-        let ptt_state_clone = ptt_state.clone();
-        std::thread::spawn(move || {
-            if let Err(e) = pw_volume::create_ptt_stream(ptt_state_clone) {
-                warn!("Failed to create PipeWire PTT stream: {}. Falling back to mute-only", e);
-            }
-        });
+        wpctl_mute_default(false);
+        info!("Mic unmuted, ready for PTT");
 
         let (tx, mut rx) = mpsc::unbounded_channel();
 
@@ -119,7 +116,7 @@ impl PttDaemon {
                         }
                         Err(e) => {
                             warn!("evdev error on {}: {}", name, e);
-                            std::thread::sleep(std::time::Duration::from_millis(100));
+                            std::thread::sleep(Duration::from_millis(100));
                         }
                     }
                 }
@@ -138,7 +135,6 @@ impl PttDaemon {
 
         {
             let active = self.active.clone();
-            let ptt_state = ptt_state.clone();
             tokio::spawn(async move {
                 let mut sigterm =
                     signal::unix::signal(signal::unix::SignalKind::terminate()).unwrap();
@@ -148,7 +144,7 @@ impl PttDaemon {
                     _ = sigterm.recv() => {},
                     _ = sigint.recv() => {},
                 }
-                ptt_state.active.store(false, Ordering::Relaxed);
+                wpctl_mute_default(false);
                 if active.load(Ordering::Relaxed) {
                     write_state(false);
                 }
@@ -158,30 +154,78 @@ impl PttDaemon {
             });
         }
 
+        let fade_handle = Arc::new(std::sync::Mutex::new(None::<thread::JoinHandle<()>>));
+        let fade_cancel = Arc::new(AtomicBool::new(false));
+        let saved_volume: Arc<std::sync::Mutex<f32>> = Arc::new(std::sync::Mutex::new(
+            wpctl_get_volume("@DEFAULT_AUDIO_SOURCE@").unwrap_or(1.0)
+        ));
+
         loop {
             tokio::select! {
                 Some(value) = rx.recv() => {
+                    if !active.load(Ordering::Relaxed) {
+                        continue;
+                    }
                     if value == 1 {
-                        ptt_state.active.store(true, Ordering::Relaxed);
+                        fade_cancel.store(true, Ordering::Relaxed);
+                        if let Some(h) = fade_handle.lock().unwrap().take() {
+                            let _ = h.join();
+                        }
+                        let vol = *saved_volume.lock().unwrap();
+                        wpctl_set_volume("@DEFAULT_AUDIO_SOURCE@", vol);
                         wpctl_mute_default(false);
+                        info!("PTT pressed — mic UNMUTED at {:.0}%", vol * 100.0);
                     } else if value == 0 {
-                        ptt_state.active.store(false, Ordering::Relaxed);
+                        let current = wpctl_get_volume("@DEFAULT_AUDIO_SOURCE@").unwrap_or(1.0);
+                        *saved_volume.lock().unwrap() = current;
+
+                        fade_cancel.store(false, Ordering::Relaxed);
+                        let cancel = fade_cancel.clone();
+                        let saved_vol = saved_volume.clone();
+                        let fade_ms = fade_duration;
+
+                        let handle = thread::spawn(move || {
+                            let orig_vol = *saved_vol.lock().unwrap();
+                            let steps = (fade_ms / 5).max(1);
+                            let vol_step = orig_vol / steps as f32;
+                            let mut cur_vol = orig_vol;
+
+                            for _ in 0..steps {
+                                if cancel.load(Ordering::Relaxed) {
+                                    wpctl_set_volume("@DEFAULT_AUDIO_SOURCE@", orig_vol);
+                                    return;
+                                }
+                                cur_vol = (cur_vol - vol_step).max(0.0);
+                                wpctl_set_volume("@DEFAULT_AUDIO_SOURCE@", cur_vol);
+                                thread::sleep(Duration::from_millis(5));
+                            }
+
+                            wpctl_mute_default(true);
+                            wpctl_set_volume("@DEFAULT_AUDIO_SOURCE@", orig_vol);
+                            info!("Fade complete — muted, volume restored to {:.0}%", orig_vol * 100.0);
+                        });
+                        *fade_handle.lock().unwrap() = Some(handle);
+                        info!("PTT released — fading out ({}ms)", fade_duration);
                     }
                 }
                 _ = sig_rx.recv() => {
+                    fade_cancel.store(true, Ordering::Relaxed);
+                    if let Some(h) = fade_handle.lock().unwrap().take() {
+                        let _ = h.join();
+                    }
                     if active.load(Ordering::Relaxed) {
-                        ptt_state.active.store(false, Ordering::Relaxed);
-                        wpctl_mute_default(true);
+                        let vol = *saved_volume.lock().unwrap();
+                        wpctl_set_volume("@DEFAULT_AUDIO_SOURCE@", vol);
+                        wpctl_mute_default(false);
                         write_state(false);
                         clear_talking();
                         active.store(false, Ordering::Relaxed);
-                        info!("PTT paused");
+                        info!("PTT paused — mic unmuted at {:.0}%", vol * 100.0);
                     } else {
-                        ptt_state.active.store(true, Ordering::Relaxed);
-                        wpctl_mute_default(false);
+                        wpctl_mute_default(true);
                         write_state(true);
                         active.store(true, Ordering::Relaxed);
-                        info!("PTT active");
+                        info!("PTT active — mic MUTED, hold {} to talk", self.config.ptt_key);
                     }
                 }
             }
@@ -243,7 +287,7 @@ async fn main() -> Result<()> {
     write_pid()?;
     write_state(false);
     clear_talking();
-    info!("PTT daemon started (PCM multiplication mode)");
+    info!("PTT daemon started (mute-based mode)");
 
     let _ = std::process::Command::new("notify-send")
         .args(["-a", "ptt", "-i", "microphone-sensitivity-high", "-t", "3000",

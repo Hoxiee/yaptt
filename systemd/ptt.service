@@ -3,7 +3,7 @@ Description=Push-to-Talk daemon
 After=graphical-session.target
 
 [Service]
-ExecStart=/home/hoshi/Projects/ptt/target/release/ptt-daemon
+ExecStart=/home/hoshi/Projects/ptt/target/release/yaptt-daemon
 Restart=on-failure
 RestartSec=2
 

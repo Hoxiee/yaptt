@@ -6,9 +6,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
-use std::time::Duration;
+
 use tracing::info;
 
 pub mod pw_volume;
@@ -243,15 +241,31 @@ pub fn wpctl_set_volume(node: &str, vol: f32) {
 }
 
 pub fn wpctl_get_default_source_id() -> Option<u32> {
+    if let Some(id) = wpctl_get_default_source_id_via_inspect() {
+        return Some(id);
+    }
+    wpctl_get_default_source_id_via_status()
+}
+
+fn wpctl_get_default_source_id_via_inspect() -> Option<u32> {
     let output = Command::new("wpctl")
         .args(["inspect", "@DEFAULT_AUDIO_SOURCE@"])
         .output()
         .ok()?;
     let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    tracing::debug!("wpctl inspect stdout: {:?}", stdout);
+    tracing::debug!("wpctl inspect stderr: {:?}", stderr);
+    tracing::debug!("wpctl inspect success: {}", output.status.success());
+    if !output.status.success() {
+        return None;
+    }
     for line in stdout.lines() {
-        if let Some(val) = line.trim().strip_prefix("node.id") {
-            let val = val.trim();
-            if let Ok(id) = val.parse::<u32>() {
+        let trimmed = line.trim();
+        if let Some(rest) = trimmed.strip_prefix("node.id") {
+            let rest = rest.trim().trim_start_matches('=').trim();
+            tracing::debug!("wpctl inspect node.id rest: {:?}", rest);
+            if let Ok(id) = rest.parse::<u32>() {
                 return Some(id);
             }
         }
@@ -259,14 +273,55 @@ pub fn wpctl_get_default_source_id() -> Option<u32> {
     None
 }
 
-pub fn wpctl_set_default_source(node_id: u32) -> Result<()> {
+fn wpctl_get_default_source_id_via_status() -> Option<u32> {
     let output = Command::new("wpctl")
-        .args(["set-default", &node_id.to_string()])
+        .args(["status"])
         .output()
-        .context("Failed to run wpctl")?;
-    if !output.status.success() {
-        anyhow::bail!("wpctl set-default failed");
+        .ok()?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    tracing::debug!("wpctl status output:\n{}", stdout);
+    let mut in_sources = false;
+    for line in stdout.lines() {
+        let trimmed = line.trim();
+        if trimmed.contains("Sources:") {
+            in_sources = true;
+            continue;
+        }
+        if in_sources && (trimmed.is_empty() || trimmed.contains("Sinks:") || trimmed.contains("Clients:")) {
+            in_sources = false;
+            continue;
+        }
+        if in_sources && trimmed.contains("*") {
+            for part in trimmed.split_whitespace() {
+                if let Ok(id) = part.trim_end_matches('.').trim_start_matches('*').parse::<u32>() {
+                    return Some(id);
+                }
+            }
+        }
     }
+    None
+}
+
+pub fn pactl_get_default_source() -> Option<String> {
+    let output = Command::new("pactl")
+        .args(["get-default-source"])
+        .output()
+        .ok()?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let name = stdout.trim().to_string();
+    if name.is_empty() { None } else { Some(name) }
+}
+
+pub fn pactl_set_default_source(name: &str) -> Result<()> {
+    let output = Command::new("pactl")
+        .args(["set-default-source", name])
+        .output()
+        .context("Failed to run pactl set-default-source")?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("pactl set-default-source failed: {}", stderr);
+    }
+    info!("Set default source to: {}", name);
     Ok(())
 }
 
@@ -288,50 +343,107 @@ pub fn wpctl_find_source_id_by_name(name: &str) -> Option<u32> {
     None
 }
 
-pub struct PipeWireLoopback {
-    process: std::process::Child,
-    pub node_id: u32,
-    original_source_id: u32,
+// ── Null-sink management ─────────────────────────────────────────────────────
+
+pub fn create_null_sink(sink_name: &str) -> Result<()> {
+    let output = Command::new("pactl")
+        .args([
+            "load-module",
+            "module-null-sink",
+            &format!("sink_name={}", sink_name),
+            &format!("sink_properties=device.description=PTT_Virtual_Microphone"),
+        ])
+        .output()
+        .context("Failed to run pactl. Is pipewire-pulse installed?")?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("pactl load-module failed: {}", stderr);
+    }
+    info!("Created null-sink: {}", sink_name);
+    Ok(())
 }
 
-impl PipeWireLoopback {
-    pub fn start(name: &str) -> Result<Self> {
-        let original_id = wpctl_get_default_source_id()
-            .context("Failed to find default audio source")?;
-        info!("Original source ID: {}", original_id);
-
-        let process = Command::new("pw-loopback")
-            .args([
-                "--capture", &original_id.to_string(),
-                "--name", name,
-            ])
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn()
-            .context("Failed to start pw-loopback")?;
-
-        std::thread::sleep(std::time::Duration::from_millis(500));
-
-        let node_id = wpctl_find_source_id_by_name(name)
-            .context("Failed to find loopback node")?;
-        info!("Loopback node ID: {}", node_id);
-
-        wpctl_set_default_source(node_id)?;
-
-        Ok(Self { process, node_id, original_source_id: original_id })
+pub fn find_sink_id_by_name(name: &str) -> Option<u32> {
+    let output = Command::new("wpctl")
+        .args(["status"])
+        .output()
+        .ok()?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut in_sinks = false;
+    for line in stdout.lines() {
+        let trimmed = line.trim();
+        if trimmed.contains("Sinks:") {
+            in_sinks = true;
+            continue;
+        }
+        if in_sinks && (trimmed.is_empty() || trimmed.contains("Sources:") || trimmed.contains("Filters:") || trimmed.contains("Streams:")) {
+            in_sinks = false;
+            continue;
+        }
+        if in_sinks && trimmed.contains(name) {
+            for part in trimmed.split_whitespace() {
+                if let Ok(id) = part.trim_end_matches('.').parse::<u32>() {
+                    return Some(id);
+                }
+            }
+        }
     }
-
-    pub fn stop(&mut self) {
-        let _ = wpctl_set_default_source(self.original_source_id);
-        let _ = self.process.kill();
-        let _ = self.process.wait();
-    }
+    None
 }
 
-impl Drop for PipeWireLoopback {
-    fn drop(&mut self) {
-        self.stop();
+pub fn find_null_sink_monitor_id(sink_name: &str) -> Option<u32> {
+    let monitor_name = format!("{}.monitor", sink_name);
+
+    if let Some(id) = find_monitor_via_wpctl(&monitor_name) {
+        return Some(id);
     }
+    find_monitor_via_pactl(&monitor_name)
+}
+
+fn find_monitor_via_wpctl(monitor_name: &str) -> Option<u32> {
+    let output = Command::new("wpctl")
+        .args(["status"])
+        .output()
+        .ok()?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut in_sources = false;
+    for line in stdout.lines() {
+        let trimmed = line.trim();
+        if trimmed.contains("Sources:") {
+            in_sources = true;
+            continue;
+        }
+        if in_sources && (trimmed.is_empty() || trimmed.contains("Filters:") || trimmed.contains("Streams:")) {
+            in_sources = false;
+            continue;
+        }
+        if in_sources && trimmed.contains(monitor_name) {
+            for part in trimmed.split_whitespace() {
+                if let Ok(id) = part.trim_end_matches('.').parse::<u32>() {
+                    return Some(id);
+                }
+            }
+        }
+    }
+    None
+}
+
+fn find_monitor_via_pactl(monitor_name: &str) -> Option<u32> {
+    let output = Command::new("pactl")
+        .args(["list", "sources", "short"])
+        .output()
+        .ok()?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    for line in stdout.lines() {
+        if line.contains(monitor_name) {
+            if let Some(id_str) = line.split_whitespace().next() {
+                if let Ok(id) = id_str.parse::<u32>() {
+                    return Some(id);
+                }
+            }
+        }
+    }
+    None
 }
 
 pub fn wpctl_get_volume(node: &str) -> Option<f32> {
