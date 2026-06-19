@@ -2,7 +2,7 @@ use yaptt_daemon::{load_config_at, save_config_at, PttConfig};
 use tempfile::TempDir;
 
 struct ConfigTest {
-    dir: TempDir,
+    _dir: TempDir,
     path: std::path::PathBuf,
 }
 
@@ -10,7 +10,7 @@ impl ConfigTest {
     fn new() -> Self {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("config.json");
-        Self { dir, path }
+        Self { _dir: dir, path }
     }
 }
 

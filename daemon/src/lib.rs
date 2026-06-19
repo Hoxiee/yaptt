@@ -1,15 +1,10 @@
 use anyhow::{Context, Result};
-use evdev::Key;
-use input_linux::{EventKind, InputEvent, EventTime};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-
 use tracing::info;
-
-pub mod pw_volume;
 
 pub const STATE_FILE: &str = "/tmp/ptt-state";
 pub const TALKING_FILE: &str = "/tmp/ptt-talking";
@@ -211,26 +206,13 @@ pub fn remove_pid() {
     remove_file_if_exists(Path::new(PID_FILE))
 }
 
-// ── wpctl ───────────────────────────────────────────────────────────────────
-
-pub fn wpctl_mute(node: &str, mute: bool) {
-    let state = if mute { "1" } else { "0" };
-    let _ = Command::new("wpctl")
-        .args(["set-mute", node, state])
-        .output();
-}
+// ── wpctl / pactl helpers ───────────────────────────────────────────────────
 
 pub fn wpctl_mute_default(mute: bool) {
-    wpctl_mute("@DEFAULT_AUDIO_SOURCE@", mute);
-}
-
-pub fn wpctl_get_mute(node: &str) -> Option<bool> {
-    let output = Command::new("wpctl")
-        .args(["get-volume", node])
-        .output()
-        .ok()?;
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    Some(stdout.contains("[MUTED]"))
+    let state = if mute { "1" } else { "0" };
+    let _ = Command::new("wpctl")
+        .args(["set-mute", "@DEFAULT_AUDIO_SOURCE@", state])
+        .output();
 }
 
 pub fn wpctl_set_volume(node: &str, vol: f32) {
@@ -240,63 +222,15 @@ pub fn wpctl_set_volume(node: &str, vol: f32) {
         .output();
 }
 
-pub fn wpctl_get_default_source_id() -> Option<u32> {
-    if let Some(id) = wpctl_get_default_source_id_via_inspect() {
-        return Some(id);
-    }
-    wpctl_get_default_source_id_via_status()
-}
-
-fn wpctl_get_default_source_id_via_inspect() -> Option<u32> {
+pub fn wpctl_get_volume(node: &str) -> Option<f32> {
     let output = Command::new("wpctl")
-        .args(["inspect", "@DEFAULT_AUDIO_SOURCE@"])
+        .args(["get-volume", node])
         .output()
         .ok()?;
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    tracing::debug!("wpctl inspect stdout: {:?}", stdout);
-    tracing::debug!("wpctl inspect stderr: {:?}", stderr);
-    tracing::debug!("wpctl inspect success: {}", output.status.success());
-    if !output.status.success() {
-        return None;
-    }
-    for line in stdout.lines() {
-        let trimmed = line.trim();
-        if let Some(rest) = trimmed.strip_prefix("node.id") {
-            let rest = rest.trim().trim_start_matches('=').trim();
-            tracing::debug!("wpctl inspect node.id rest: {:?}", rest);
-            if let Ok(id) = rest.parse::<u32>() {
-                return Some(id);
-            }
-        }
-    }
-    None
-}
-
-fn wpctl_get_default_source_id_via_status() -> Option<u32> {
-    let output = Command::new("wpctl")
-        .args(["status"])
-        .output()
-        .ok()?;
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    tracing::debug!("wpctl status output:\n{}", stdout);
-    let mut in_sources = false;
-    for line in stdout.lines() {
-        let trimmed = line.trim();
-        if trimmed.contains("Sources:") {
-            in_sources = true;
-            continue;
-        }
-        if in_sources && (trimmed.is_empty() || trimmed.contains("Sinks:") || trimmed.contains("Clients:")) {
-            in_sources = false;
-            continue;
-        }
-        if in_sources && trimmed.contains("*") {
-            for part in trimmed.split_whitespace() {
-                if let Ok(id) = part.trim_end_matches('.').trim_start_matches('*').parse::<u32>() {
-                    return Some(id);
-                }
-            }
+    for part in stdout.split_whitespace() {
+        if let Ok(v) = part.parse::<f32>() {
+            return Some(v);
         }
     }
     None
@@ -323,141 +257,6 @@ pub fn pactl_set_default_source(name: &str) -> Result<()> {
     }
     info!("Set default source to: {}", name);
     Ok(())
-}
-
-pub fn wpctl_find_source_id_by_name(name: &str) -> Option<u32> {
-    let output = Command::new("wpctl")
-        .args(["status"])
-        .output()
-        .ok()?;
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    for line in stdout.lines() {
-        if line.contains(name) {
-            for part in line.split_whitespace() {
-                if let Ok(id) = part.trim_end_matches('.').parse::<u32>() {
-                    return Some(id);
-                }
-            }
-        }
-    }
-    None
-}
-
-// ── Null-sink management ─────────────────────────────────────────────────────
-
-pub fn create_null_sink(sink_name: &str) -> Result<()> {
-    let output = Command::new("pactl")
-        .args([
-            "load-module",
-            "module-null-sink",
-            &format!("sink_name={}", sink_name),
-            &format!("sink_properties=device.description=PTT_Virtual_Microphone"),
-        ])
-        .output()
-        .context("Failed to run pactl. Is pipewire-pulse installed?")?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("pactl load-module failed: {}", stderr);
-    }
-    info!("Created null-sink: {}", sink_name);
-    Ok(())
-}
-
-pub fn find_sink_id_by_name(name: &str) -> Option<u32> {
-    let output = Command::new("wpctl")
-        .args(["status"])
-        .output()
-        .ok()?;
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let mut in_sinks = false;
-    for line in stdout.lines() {
-        let trimmed = line.trim();
-        if trimmed.contains("Sinks:") {
-            in_sinks = true;
-            continue;
-        }
-        if in_sinks && (trimmed.is_empty() || trimmed.contains("Sources:") || trimmed.contains("Filters:") || trimmed.contains("Streams:")) {
-            in_sinks = false;
-            continue;
-        }
-        if in_sinks && trimmed.contains(name) {
-            for part in trimmed.split_whitespace() {
-                if let Ok(id) = part.trim_end_matches('.').parse::<u32>() {
-                    return Some(id);
-                }
-            }
-        }
-    }
-    None
-}
-
-pub fn find_null_sink_monitor_id(sink_name: &str) -> Option<u32> {
-    let monitor_name = format!("{}.monitor", sink_name);
-
-    if let Some(id) = find_monitor_via_wpctl(&monitor_name) {
-        return Some(id);
-    }
-    find_monitor_via_pactl(&monitor_name)
-}
-
-fn find_monitor_via_wpctl(monitor_name: &str) -> Option<u32> {
-    let output = Command::new("wpctl")
-        .args(["status"])
-        .output()
-        .ok()?;
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let mut in_sources = false;
-    for line in stdout.lines() {
-        let trimmed = line.trim();
-        if trimmed.contains("Sources:") {
-            in_sources = true;
-            continue;
-        }
-        if in_sources && (trimmed.is_empty() || trimmed.contains("Filters:") || trimmed.contains("Streams:")) {
-            in_sources = false;
-            continue;
-        }
-        if in_sources && trimmed.contains(monitor_name) {
-            for part in trimmed.split_whitespace() {
-                if let Ok(id) = part.trim_end_matches('.').parse::<u32>() {
-                    return Some(id);
-                }
-            }
-        }
-    }
-    None
-}
-
-fn find_monitor_via_pactl(monitor_name: &str) -> Option<u32> {
-    let output = Command::new("pactl")
-        .args(["list", "sources", "short"])
-        .output()
-        .ok()?;
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    for line in stdout.lines() {
-        if line.contains(monitor_name) {
-            if let Some(id_str) = line.split_whitespace().next() {
-                if let Ok(id) = id_str.parse::<u32>() {
-                    return Some(id);
-                }
-            }
-        }
-    }
-    None
-}
-
-pub fn wpctl_get_volume(node: &str) -> Option<f32> {
-    let output = Command::new("wpctl")
-        .args(["get-volume", node])
-        .output()
-        .ok()?;
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    for part in stdout.split_whitespace() {
-        if let Ok(v) = part.parse::<f32>() {
-            return Some(v);
-        }
-    }
-    None
 }
 
 // ── Device discovery ─────────────────────────────────────────────────────────
@@ -511,6 +310,9 @@ pub fn find_keyboard_devices() -> Vec<(PathBuf, String)> {
 
 // ── Event helpers ────────────────────────────────────────────────────────────
 
+use evdev::Key;
+use input_linux::{EventKind, EventTime, InputEvent};
+
 pub fn make_key_event(code: u16, value: i32) -> InputEvent {
     InputEvent {
         time: EventTime::new(0, 0),
@@ -529,15 +331,13 @@ pub fn make_syn_report() -> InputEvent {
     }
 }
 
-// ── Event handling ───────────────────────────────────────────────────────────
-
 pub fn handle_key_event(code: u16, value: i32, ptt_key: Key) -> Option<bool> {
     let key = Key::new(code);
     if key == ptt_key {
         match value {
-            1 => Some(true),  // pressed → unmute
-            0 => Some(false), // released → mute
-            _ => None,        // repeat etc.
+            1 => Some(true),
+            0 => Some(false),
+            _ => None,
         }
     } else {
         None
