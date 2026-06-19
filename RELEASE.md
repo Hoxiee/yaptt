@@ -1,49 +1,40 @@
 # Release process
 
-## 1. Update version
-
-Edit `daemon/Cargo.toml`:
-```toml
-version = "X.Y.Z"
-```
-
-## 2. Commit and tag
+## Quick release
 
 ```bash
-git add -A
-git commit -m "release: vX.Y.Z"
+# 1. Update version in daemon/Cargo.toml
+# 2. Push tag:
 git tag vX.Y.Z
 git push origin master --tags
 ```
 
-## 3. GitHub Actions
+Everything else is automated:
 
-The push triggers `.github/workflows/release.yml` which:
-- Runs all tests
-- Builds release binaries for x86_64-unknown-linux-gnu
-- Creates a GitHub Release with `artifacts.tar.gz`
+- **GitHub Actions** builds binaries, creates Release, updates PKGBUILD version
+- **AUR** requires manual push (see below)
 
-## 4. AUR (optional)
+## What happens automatically
+
+1. Tag push triggers `.github/workflows/release.yml`
+2. Tests run, binaries built, `artifacts.tar.gz` packaged
+3. PKGBUILD `pkgver` updated and committed back to repo
+4. GitHub Release created with artifacts
+
+## AUR push (manual)
 
 After the GitHub Release is created:
 
 ```bash
-# Update PKGBUILD
-# - pkgver=X.Y.Z
-# - sha256sums=('SKIP') or generate with updpkgsums
+# Clone AUR repo (first time only)
+git clone ssh://aur@aur.archlinux.org/yaptt-bin.git
 
-# Publish to AUR
-cd /path/to/yaptt-aur
+# Update and push
+cd yaptt-bin
 cp /path/to/yaptt/PKGBUILD .
+updpkgsums          # or set sha256sums=('SKIP')
 makepkg --printsrcinfo > .SRCINFO
 git add PKGBUILD .SRCINFO
 git commit -m "update to X.Y.Z"
 git push
 ```
-
-## Artifacts
-
-Each release produces `artifacts.tar.gz` containing:
-- `yaptt-daemon` — main daemon
-- `yaptt-toggle` — SIGUSR1 toggle
-- `yaptt-indicator` — waybar widget
