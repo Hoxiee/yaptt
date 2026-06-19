@@ -160,9 +160,8 @@ impl PttDaemon {
 
         let fade_handle = Arc::new(std::sync::Mutex::new(None::<thread::JoinHandle<()>>));
         let fade_cancel = Arc::new(AtomicBool::new(false));
-        let saved_volume: Arc<std::sync::Mutex<f32>> = Arc::new(std::sync::Mutex::new(
-            wpctl_get_volume("@DEFAULT_AUDIO_SOURCE@").unwrap_or(1.0)
-        ));
+        // Volume captured when grave is pressed — used for fade and restore
+        let active_vol: Arc<std::sync::Mutex<f32>> = Arc::new(std::sync::Mutex::new(1.0));
 
         // Main event loop
         loop {
@@ -172,27 +171,26 @@ impl PttDaemon {
                         continue;
                     }
                     if value == 1 {
-                        // PTT key pressed — cancel fade, restore volume, unmute
+                        // Grave pressed — cancel any fade, read current volume, unmute
                         fade_cancel.store(true, Ordering::Relaxed);
                         if let Some(h) = fade_handle.lock().unwrap().take() {
                             let _ = h.join();
                         }
-                        let vol = *saved_volume.lock().unwrap();
-                        wpctl_set_volume("@DEFAULT_AUDIO_SOURCE@", vol);
+                        let vol = wpctl_get_volume("@DEFAULT_AUDIO_SOURCE@").unwrap_or(1.0);
+                        *active_vol.lock().unwrap() = vol;
                         wpctl_mute_default(false);
                         info!("PTT pressed — mic UNMUTED at {:.0}%", vol * 100.0);
                     } else if value == 0 {
-                        // PTT key released — save volume, start fade-out
-                        let current = wpctl_get_volume("@DEFAULT_AUDIO_SOURCE@").unwrap_or(1.0);
-                        *saved_volume.lock().unwrap() = current;
+                        // Grave released — fade from active_vol, then mute + restore
+                        let vol = *active_vol.lock().unwrap();
 
                         fade_cancel.store(false, Ordering::Relaxed);
                         let cancel = fade_cancel.clone();
-                        let saved_vol = saved_volume.clone();
+                        let av = active_vol.clone();
                         let fade_ms = fade_duration;
 
                         let handle = thread::spawn(move || {
-                            let orig_vol = *saved_vol.lock().unwrap();
+                            let orig_vol = *av.lock().unwrap();
                             let steps = (fade_ms / 5).max(1);
                             let vol_step = orig_vol / steps as f32;
                             let mut cur_vol = orig_vol;
@@ -212,31 +210,26 @@ impl PttDaemon {
                             info!("Fade complete — muted, volume restored to {:.0}%", orig_vol * 100.0);
                         });
                         *fade_handle.lock().unwrap() = Some(handle);
-                        info!("PTT released — fading out ({}ms)", fade_duration);
+                        info!("PTT released — fading out ({}ms) from {:.0}%", fade_duration, vol * 100.0);
                     }
                 }
                 _ = sig_rx.recv() => {
-                    // SIGUSR1 — toggle PTT mode
+                    // SIGUSR1 — toggle PTT mode (mute/unmute only, never touch volume)
                     fade_cancel.store(true, Ordering::Relaxed);
                     if let Some(h) = fade_handle.lock().unwrap().take() {
                         let _ = h.join();
                     }
                     if active.load(Ordering::Relaxed) {
-                        let vol = *saved_volume.lock().unwrap();
-                        wpctl_set_volume("@DEFAULT_AUDIO_SOURCE@", vol);
                         wpctl_mute_default(false);
                         write_state(false);
                         clear_talking();
                         active.store(false, Ordering::Relaxed);
-                        info!("PTT paused — mic unmuted at {:.0}%", vol * 100.0);
+                        info!("PTT paused — mic unmuted");
                     } else {
-                        // Capture current user volume before muting
-                        let current = wpctl_get_volume("@DEFAULT_AUDIO_SOURCE@").unwrap_or(1.0);
-                        *saved_volume.lock().unwrap() = current;
                         wpctl_mute_default(true);
                         write_state(true);
                         active.store(true, Ordering::Relaxed);
-                        info!("PTT active — mic MUTED at {:.0}%, hold {} to talk", current * 100.0, self.config.ptt_key);
+                        info!("PTT active — mic MUTED, hold {} to talk", self.config.ptt_key);
                     }
                 }
             }
