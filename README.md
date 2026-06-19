@@ -1,4 +1,3 @@
-    "./modules/ptt.jsonc"
 # Yet-Another-Push-To-Talk
 
 System-wide push-to-talk for Wayland.
